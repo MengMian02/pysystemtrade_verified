@@ -1,0 +1,53 @@
+[project]
+name = "pysystemtrade"
+version = "1.80"
+authors = [
+  { name="Robert Carver", email="rob@systematicmoney.org" },
+]
+description = "Systematic futures trading in Python"
+readme = "README.md"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: GNU v3",
+    "Operating System :: Linux",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/robcarver17/pysystemtrade"
+"Bug Tracker" = "https://github.com/robcarver17/pysystemtrade/issues"
+
+[tool.pytest.ini_options]
+norecursedirs = "examples"
+addopts = "--doctest-modules --ignore=systems/provided/moretradingrules/temp.py"
+log_cli = "true"
+log_cli_level = 10
+log_format = '%(asctime)s %(levelname)s %(name)s %(message)s'
+log_date_format = '%Y-%m-%d %H:%M:%S'
+doctest_optionflags = ["ELLIPSIS", "NUMBER", "NORMALIZE_WHITESPACE"]
+testpaths = [
+    # "syscore",
+    # "syscore/interactive/display",
+    "syscore/pandas",
+    "syscore/tests",
+    # "sysdata",
+    "sysdata/config",
+    # "sysdata/sim",
+    "sysdata/tests",
+    "sysinit/futures/tests",
+    # "syslogdiag",
+    "systems/tests",
+    "sysobjects/production",
+    "sysobjects/tests",
+    # "sysquant/estimators",
+    "sysquant/optimisation",
+    # "systems",
+    # "systems/accounts",
+    # "systems/provided",
+    # "systems/provided/futures_chapter15",
+    "tests",
+]
+
+[tool.black]
+line-length = 88
+target-version = ['py310']
+required-version = '23.11.0'

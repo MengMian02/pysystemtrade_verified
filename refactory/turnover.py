@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 from refactory.submission import get_capped_forecast, my_config, calculate_avg_position, get_net_returns, \
-    get_smoothed_weights, get_div_mult
+    get_div_mult, generate_fitting_dates, get_weight, replace_nan
 
 
 def get_turnover_for_forecast(instrument_code, Lfast, Lslow):
@@ -84,3 +84,23 @@ def get_combined_forecast(instrument_code):
     combined_forecast = raw_weighted_forecast * forecast_div_multiplier
     capped_combined_forecast = combined_forecast.clip(20, -20)
     return capped_combined_forecast
+
+
+def get_smoothed_weights(instrument_code, data_for_analysis):
+    fit_period, fit_end_list = generate_fitting_dates()
+    weight_list = []
+    for i in range(len(fit_period) - 1):
+        weight = get_weight(data_for_analysis, i, fit_end_list)
+        weight_list.append(weight)
+
+    weights = pd.Series(weight_list)
+    weights.index = fit_end_list
+
+    ewmac32 = get_capped_forecast(instrument_code, 32, 128)
+    ewmac8 = get_capped_forecast(instrument_code, 8, 32)
+    forecast = pd.concat([ewmac32, ewmac8], axis=1)
+    weights = weights.reindex(forecast.index, method='ffill')
+    weights = weights.apply(replace_nan)
+    df = pd.DataFrame(weights.tolist())
+    smoothed_weights = df.ewm(span=125).mean()
+    return smoothed_weights

@@ -290,26 +290,6 @@ def replace_nan(x):
         return x
 
 
-def get_smoothed_weights(instrument_code, data_for_analysis):
-    fit_period, fit_end_list = generate_fitting_dates()
-    weight_list = []
-    for i in range(len(fit_period) - 1):
-        weight = get_weight(data_for_analysis, i, fit_end_list)
-        weight_list.append(weight)
-
-    weights = pd.Series(weight_list)
-    weights.index = fit_end_list
-
-    ewmac32 = get_capped_forecast(instrument_code, 32, 128)
-    ewmac8 = get_capped_forecast(instrument_code, 8, 32)
-    forecast = pd.concat([ewmac32, ewmac8], axis=1)
-    weights = weights.reindex(forecast.index, method='ffill')
-    weights = weights.apply(replace_nan)
-    df = pd.DataFrame(weights.tolist())
-    smoothed_weights = df.ewm(span=125).mean()
-    return smoothed_weights
-
-
 ############################################################################################# 分割线
 
 def get_concat_forecast(instrument, end='2023-09-03'):
@@ -479,22 +459,33 @@ def apply_buffer_for_single_period(last_position, optimal_position, top_pos, bot
 
 
 def process_instrument_pnl(instrument):
-    net_returns = get_net_returns()
     forecast8 = get_capped_forecast(instrument, 8, 32)
     forecast8 = forecast8.rename('ewmac8')
     forecast32 = get_capped_forecast(instrument, 32, 128)
     forecast32 = forecast32.rename('ewmac32')
-    df = pd.concat([forecast8, forecast32], axis=1)  # Forecast 没有问题
-    weights = get_smoothed_weights(instrument, net_returns)
-    weights.rename(columns={0: 'ewmac32', 1: 'ewmac8'}, inplace=True)
-    weights = weights[['ewmac8', 'ewmac32']]
-    weights.index = df.index
+    forecast_df = pd.concat([forecast8, forecast32], axis=1)  # Forecast 没有问题
+
+    net_returns = get_net_returns()
+
+    fit_period, fit_end_list = generate_fitting_dates()
+    weight_list = []
+    for i in range(len(fit_period) - 1):
+        weight = get_weight(net_returns, i, fit_end_list)
+        weight_list.append(weight)
+    weights1 = pd.Series(weight_list)
+    weights1.index = fit_end_list
+    weights1 = weights1.reindex(forecast_df.index, method='ffill')
+    weights1 = weights1.apply(replace_nan)
+    weight_df = pd.DataFrame(weights1.tolist())
+
+    smoothed_weights = weight_df.ewm(span=125).mean()
+    smoothed_weights.rename(columns={0: 'ewmac32', 1: 'ewmac8'}, inplace=True)
+    weights = smoothed_weights[['ewmac8', 'ewmac32']]
+
+    weights.index = forecast_df.index
     forecast_div_multiplier = get_div_mult(instrument, weights)
-    raw_weighted_forecast = weights * df
-    raw_weighted_forecast = raw_weighted_forecast.sum(axis=1)
-    combined_forecast = raw_weighted_forecast * forecast_div_multiplier
-    forecast = combined_forecast.clip(20, -20)
-    capped_combined_forecast = forecast
+    combined_forecast = (weights * forecast_df).sum(axis=1) * forecast_div_multiplier
+    capped_combined_forecast = combined_forecast.clip(20, -20)
 
     avg_position = calculate_avg_position(instrument)
 

@@ -7,7 +7,6 @@ from refactory.data_source import get_instrument_info, get_daily_price, get_spre
 from sysdata.config.configdata import Config
 from sysquant.returns import dictOfReturnsForOptimisation
 from sysquant.returns import dictOfReturnsForOptimisationWithCosts
-from sysquant.returns import returnsForOptimisationWithCosts
 from systems.accounts.curves.account_curve import accountCurve
 from systems.accounts.curves.account_curve_group import accountCurveGroup
 from systems.accounts.curves.dict_of_account_curves import dictOfAccountCurves
@@ -650,18 +649,21 @@ def caculate_instrument_weights(daily_ret):
     return weight
 
 
+def cacluate_instrument_pnl(instrument):
+    calculator = pandl_calculator_for_subsystem_with_cash_costs(instrument)
+    v = accountCurve(calculator).pandl_calculator_with_costs
+    pnl = v.pandl_in_base_currency()
+    return pnl
+
+
 def get_instrument_weight(my_config):
-    dict_of_pandl_across_subsystems = {}
-    for instrument in my_config.instruments:
-        pandl_calculator = pandl_calculator_for_subsystem_with_cash_costs(instrument)
-        dict_of_pandl_across_subsystems[instrument] = accountCurve(pandl_calculator)
-    dict_of_pandl_across_subsystems = dictOfAccountCurves(dict_of_pandl_across_subsystems)
+    pnl_list = [cacluate_instrument_pnl(instrument) for instrument in my_config.instruments]
 
-    capital = 1000000
-    account_curve_group = accountCurveGroup(dict_of_pandl_across_subsystems, capital=capital, weighted=False)
+    pnl = pd.concat(pnl_list, axis=1, sort=True).sum(axis=1)
+    pnl.index = pd.to_datetime(pnl.index)
+    daily_pnl = pnl.resample("B").sum()
 
-    gross = getattr(account_curve_group, "gross")
-    account_curve = gross.to_frame()
+    account_curve = daily_pnl.to_frame()
     account_curve = account_curve.resample("1B").sum()
     account_curve[account_curve == 0.0] = np.nan
 
@@ -670,6 +672,10 @@ def get_instrument_weight(my_config):
     print(weight)
 
     return weight
+
+
+def percentage_pandl_given_pandl(capital, pandl_in_base):
+    return 100.0 * pandl_in_base / capital
 
 
 if __name__ == '__main__':

@@ -650,17 +650,21 @@ def caculate_instrument_weights(daily_ret):
     return weight
 
 
-def iter_method(gross, item):
-    calculator = gross.dict_of_account_curves[item].pandl_calculator_with_costs
+def iter_method(gross, instrument):
+    curve = gross.dict_of_account_curves[instrument]
+    calculator = curve.pandl_calculator_with_costs
     pnl = calculator.as_pd_series(percent=False, curve_type=GROSS_CURVE)
+
     pnl.index = pd.to_datetime(pnl.index)
     daily_pnl = pnl.resample("B").sum()
     return daily_pnl
 
 
 def get_instrument_weight(my_config):
+    instruments = my_config.instruments
+
     dict_of_account_curves = {}
-    for instrument in my_config.instruments:
+    for instrument in instruments:
         pandl_calculator = pandl_calculator_for_subsystem_with_cash_costs(instrument)
         dict_of_account_curves[instrument] = accountCurve(pandl_calculator)
     dict_of_account_curves = dictOfAccountCurves(dict_of_account_curves)
@@ -672,11 +676,11 @@ def get_instrument_weight(my_config):
         capital=capital,
         curve_type=GROSS_CURVE,
         weighted=False)
+    data_as_list = [iter_method(gross, instrument) for instrument in instruments]
 
-    asset_columns = gross.asset_columns
-    data_as_list = [iter_method(gross, asset_name) for asset_name in asset_columns]
+
     data_as_pd = pd.concat(data_as_list, axis=1)
-    data_as_pd.columns = asset_columns
+    data_as_pd.columns = instruments
     curves = data_as_pd.resample("1B").sum()
     curves[curves == 0.0] = np.nan
 

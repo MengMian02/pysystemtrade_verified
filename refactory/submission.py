@@ -650,11 +650,10 @@ def caculate_instrument_weights(daily_ret):
     return weight
 
 
-def iter_method(gross, instrument):
-    curve = gross.dict_of_account_curves[instrument]
+def iter_method(curves, instrument):
+    curve = curves[instrument]
     calculator = curve.pandl_calculator_with_costs
     pnl = calculator.as_pd_series(percent=False, curve_type=GROSS_CURVE)
-
     pnl.index = pd.to_datetime(pnl.index)
     daily_pnl = pnl.resample("B").sum()
     return daily_pnl
@@ -669,15 +668,7 @@ def get_instrument_weight(my_config):
         dict_of_account_curves[instrument] = accountCurve(pandl_calculator)
     dict_of_account_curves = dictOfAccountCurves(dict_of_account_curves)
 
-    capital = 1000000
-
-    gross = accountCurveGroup(
-        dict_of_account_curves,
-        capital=capital,
-        curve_type=GROSS_CURVE,
-        weighted=False)
-    data_as_list = [iter_method(gross, instrument) for instrument in instruments]
-
+    data_as_list = [iter_method(dict_of_account_curves, instrument) for instrument in instruments]
 
     data_as_pd = pd.concat(data_as_list, axis=1)
     data_as_pd.columns = instruments

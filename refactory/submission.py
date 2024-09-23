@@ -2,7 +2,8 @@ import numpy as np
 import pandas as pd
 from datetime import datetime
 
-from refactory.data_source import get_instrument_info, get_daily_price, get_spread_cost, get_roll_parameters
+from refactory.data_source import get_instrument_info, get_daily_price, get_spread_cost, get_roll_parameters, \
+    get_raw_carry_data
 from sysdata.config.configdata import Config
 from sysquant.returns import dictOfReturnsForOptimisation
 from sysquant.returns import dictOfReturnsForOptimisationWithCosts
@@ -395,15 +396,6 @@ def get_div_mult(instrument_code, weights):
 
 
 ############################################################################################# 分割线
-
-def get_raw_carry_data(instrument_code):
-    filename = 'data\\futures\\multiple_prices_csv\\' + instrument_code + '.csv'
-    carry_data = pd.read_csv(filename)
-    carry_price = carry_data['PRICE']
-    carry_price.index = carry_data['DATETIME']
-    carry_price.index = pd.to_datetime(carry_price.index)
-    daily_carry_price = carry_price.resample('1B').last()
-    return daily_carry_price
 
 
 def get_price_vol(instrument_code):

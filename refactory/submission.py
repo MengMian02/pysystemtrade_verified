@@ -12,13 +12,13 @@ from systems.accounts.curves.account_curve_group import accountCurveGroup
 from systems.accounts.curves.dict_of_account_curves import dictOfAccountCurves
 from systems.accounts.pandl_calculators.pandl_SR_cost import pandlCalculationWithSRCosts
 
-data = csvFuturesSimData()
+source_data = csvFuturesSimData()
 
 
 # 传入品种代码
 def raw_price_and_vol(instrument_code, span=35, min_periods=10, vol_floor=True,
                       floor_min_quant=0.05, floor_min_periods=100, floor_days=500):
-    price = data.daily_prices(instrument_code)
+    price = source_data.daily_prices(instrument_code)
     vol = price.ewm(adjust=True, span=span, min_periods=min_periods).std()
     vol_abs_min: float = 0.0000000001
     vol[vol < vol_abs_min] = vol_abs_min
@@ -70,7 +70,7 @@ def get_capped_forecast(instrument_code, Lfast, Lslow, upper_cap=20):
 
 # 算每天的收益
 def get_daily_returns(instrument_code):
-    price = data.daily_prices(instrument_code)
+    price = source_data.daily_prices(instrument_code)
     daily_returns = price.diff()
     return daily_returns
 
@@ -103,7 +103,7 @@ def pandl_for_instrument_forecast(forecast, capital, risk_target,
     daily_risk_target = risk_target / (256 ** 0.5)
     daily_cash_vol_target = daily_risk_target * capital
 
-    instr_object = data.db_futures_instrument_data.get_instrument_data(instrument_code)  # 基础品种信息
+    instr_object = source_data.db_futures_instrument_data.get_instrument_data(instrument_code)  # 基础品种信息
     block_move_price = instr_object.meta_data.Pointsize
     instr_currency_vol = daily_returns_volatility * block_move_price
     ave_notional_position = daily_cash_vol_target / instr_currency_vol
@@ -426,7 +426,7 @@ def get_block_value(instrument_code):
 
 
 def get_instrument_info(instrument_code):
-    return data.db_futures_instrument_data.get_instrument_data(instrument_code)
+    return source_data.db_futures_instrument_data.get_instrument_data(instrument_code)
 
 
 def get_instrument_value_vol(instrument_code):
@@ -482,8 +482,8 @@ from sysobjects.instruments import instrumentCosts
 
 
 def get_raw_cost_data(instrument_code):
-    instrument_data = data.db_futures_instrument_data.get_instrument_data(instrument_code)
-    spread_costs = data.db_spread_cost_data.get_spread_cost(instrument_code)
+    instrument_data = source_data.db_futures_instrument_data.get_instrument_data(instrument_code)
+    spread_costs = source_data.db_spread_cost_data.get_spread_cost(instrument_code)
     instrument_meta_data = instrument_data.meta_data
     instrument_costs = instrumentCosts.from_meta_data_and_spread_cost(instrument_meta_data, spread_costs)
     return instrument_costs
@@ -686,4 +686,4 @@ def get_instrument_weight(my_config, data):
 
 
 if __name__ == '__main__':
-    get_instrument_weight(my_config, data)
+    get_instrument_weight(my_config, source_data)

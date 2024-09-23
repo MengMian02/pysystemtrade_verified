@@ -665,7 +665,7 @@ def get_instrument_weight(my_config):
         curve_type=GROSS_CURVE,
         weighted=False)
 
-    account_curve = gross.to_frame()
+    account_curve = method_name(gross)
     account_curve = account_curve.resample("1B").sum()
     account_curve[account_curve == 0.0] = np.nan
 
@@ -674,6 +674,19 @@ def get_instrument_weight(my_config):
     print(weight)
 
     return weight
+
+
+def iter_method(gross, item):
+    kwargs = gross.kwargs
+    return accountCurve(gross.get_pandl_calculator_for_item(item), **kwargs)
+
+
+def method_name(gross):
+    asset_columns = gross.asset_columns
+    data_as_list = [iter_method(gross, asset_name) for asset_name in asset_columns]
+    data_as_pd = pd.concat(data_as_list, axis=1)
+    data_as_pd.columns = asset_columns
+    return data_as_pd
 
 
 if __name__ == '__main__':

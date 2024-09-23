@@ -650,6 +650,14 @@ def caculate_instrument_weights(daily_ret):
     return weight
 
 
+def iter_method(gross, item):
+    calculator = gross.dict_of_account_curves[item].pandl_calculator_with_costs
+    pnl = calculator.as_pd_series(percent=False, curve_type=GROSS_CURVE)
+    pnl.index = pd.to_datetime(pnl.index)
+    daily_pnl = pnl.resample("B").sum()
+    return daily_pnl
+
+
 def get_instrument_weight(my_config):
     dict_of_account_curves = {}
     for instrument in my_config.instruments:
@@ -665,31 +673,18 @@ def get_instrument_weight(my_config):
         curve_type=GROSS_CURVE,
         weighted=False)
 
-    account_curve = method_name(gross)
-    account_curve = account_curve.resample("1B").sum()
-    account_curve[account_curve == 0.0] = np.nan
-
-    weight = caculate_instrument_weights(account_curve)
-
-    print(weight)
-
-    return weight
-
-
-def iter_method(gross, item):
-    calculator = gross.dict_of_account_curves[item].pandl_calculator_with_costs
-    pnl = calculator.as_pd_series(percent=False, curve_type=GROSS_CURVE)
-    pnl.index = pd.to_datetime(pnl.index)
-    daily_pnl = pnl.resample("B").sum()
-    return daily_pnl
-
-
-def method_name(gross):
     asset_columns = gross.asset_columns
     data_as_list = [iter_method(gross, asset_name) for asset_name in asset_columns]
     data_as_pd = pd.concat(data_as_list, axis=1)
     data_as_pd.columns = asset_columns
-    return data_as_pd
+    curves = data_as_pd.resample("1B").sum()
+    curves[curves == 0.0] = np.nan
+
+    weight = caculate_instrument_weights(curves)
+
+    print(weight)
+
+    return weight
 
 
 if __name__ == '__main__':

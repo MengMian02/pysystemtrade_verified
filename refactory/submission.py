@@ -7,11 +7,11 @@ from refactory.data_source import get_instrument_info, get_daily_price, get_spre
 from sysdata.config.configdata import Config
 from sysquant.returns import dictOfReturnsForOptimisation
 from sysquant.returns import dictOfReturnsForOptimisationWithCosts
-from sysquant.returns import returnsForOptimisationWithCosts
 from systems.accounts.curves.account_curve import accountCurve
 from systems.accounts.curves.account_curve_group import accountCurveGroup
 from systems.accounts.curves.dict_of_account_curves import dictOfAccountCurves
 from systems.accounts.pandl_calculators.pandl_SR_cost import pandlCalculationWithSRCosts
+from systems.accounts.pandl_calculators.pandl_generic_costs import GROSS_CURVE
 
 
 # 传入品种代码
@@ -658,9 +658,13 @@ def get_instrument_weight(my_config):
     dict_of_account_curves = dictOfAccountCurves(dict_of_account_curves)
 
     capital = 1000000
-    account_curve_group = accountCurveGroup(dict_of_account_curves, capital=capital, weighted=False)
 
-    gross = getattr(account_curve_group, "gross")
+    gross = accountCurveGroup(
+        dict_of_account_curves,
+        capital=capital,
+        curve_type=GROSS_CURVE,
+        weighted=False)
+
     account_curve = gross.to_frame()
     account_curve = account_curve.resample("1B").sum()
     account_curve[account_curve == 0.0] = np.nan

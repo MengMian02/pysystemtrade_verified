@@ -1,17 +1,18 @@
 import numpy as np
 import pandas as pd
+from copy import copy
 from datetime import datetime
+from scipy.optimize import minimize
 
-from refactory.data_source import get_instrument_info, get_daily_price, get_spread_cost, get_roll_parameters, \
-    get_raw_carry_data
+from refactory.data_source import get_instrument_info, get_daily_price, get_raw_carry_data
 from sysdata.config.configdata import Config
+from sysquant.fitting_dates import fitDates, listOfFittingDates
 from sysquant.returns import dictOfReturnsForOptimisation
 from sysquant.returns import dictOfReturnsForOptimisationWithCosts
 from systems.accounts.curves.account_curve import accountCurve
 from systems.accounts.curves.account_curve_group import accountCurveGroup
 from systems.accounts.curves.dict_of_account_curves import dictOfAccountCurves
 from systems.accounts.pandl_calculators.pandl_SR_cost import pandlCalculationWithSRCosts
-from systems.accounts.pandl_calculators.pandl_generic_costs import GROSS_CURVE
 
 
 # 传入品种代码
@@ -39,10 +40,6 @@ def ewmac_forecast(instrument_code, Lfast, Lslow, min_periods=1):
     raw_forecast = raw_ewm / vol.ffill()
     raw_forecast[raw_forecast == 0] = np.nan
     return raw_forecast
-
-
-# Forecast scalar
-from copy import copy
 
 
 def get_forecast_scalar(instrument_code, Lfast, Lslow, window=250000,
@@ -190,8 +187,6 @@ def get_net_returns():
 
 ############################################################################################# 分割线
 
-from sysquant.fitting_dates import fitDates, listOfFittingDates
-
 
 def generate_fitting_dates(interval_frequency='365D'):
     net_returns = get_net_returns()
@@ -259,9 +254,6 @@ def neg_SR(weights, sigma, mus):
 
     sr = -estimated_returns / stdev
     return sr
-
-
-from scipy.optimize import minimize
 
 
 def get_weight(data_for_analysis, date_period, fit_end_list, strategy_number=2):
@@ -423,14 +415,6 @@ def get_instrument_value_vol(instrument_code):
     return instr_value_vol
 
 
-def get_avg_position_at_subsystem_level(instrument_code, capital=1000000, perc_vol_target=16):
-    instr_value_vol = get_instrument_value_vol(instrument_code)
-    annual_cash_vol_target = capital * perc_vol_target / 100
-    daily_cash_vol_target = annual_cash_vol_target / 16
-    vol_scalar = daily_cash_vol_target / instr_value_vol
-    return vol_scalar
-
-
 def get_combined_forecast(instrument_code):
     net_returns = get_net_returns()
     forecast8 = get_capped_forecast(instrument_code, 8, 32)
@@ -452,72 +436,7 @@ def get_combined_forecast(instrument_code):
     return capped_combined_forecast
 
 
-def get_subsystem_position(instrument_code):
-    forecast32 = get_capped_forecast(instrument_code, 32, 128)
-    capped_combined_forecast = get_combined_forecast(instrument_code)
-
-    vol = get_avg_position_at_subsystem_level(instrument_code)
-    vol = vol.reindex(forecast32.index, method='ffill')
-
-    subsystem_position_raw = vol * capped_combined_forecast / 10.0
-    return subsystem_position_raw
-
-
 ############################################################################################# 分割线
-from sysobjects.instruments import instrumentCosts
-
-
-def get_raw_cost_data(instrument_code):
-    instrument_data = get_instrument_info(instrument_code)
-    spread_costs = get_spread_cost(instrument_code)
-    instrument_meta_data = instrument_data.meta_data
-    instrument_costs = instrumentCosts.from_meta_data_and_spread_cost(instrument_meta_data, spread_costs)
-    return instrument_costs
-
-
-def get_buffered_positions(instrument_code):
-    subsystem_position = get_subsystem_position(instrument_code)
-    vol_scalar = get_avg_position_at_subsystem_level(instrument_code)
-
-    vol_scalar = vol_scalar.reindex(subsystem_position.index).ffill()
-    avg_position = vol_scalar * 1.0 * 1.0  # 乘的是instr weight和idm, 目前为default 1
-    buffer_size = 0.10
-    buffer = avg_position * buffer_size
-
-    top_pos = subsystem_position.ffill() + buffer.ffill()
-    bottom_pos = subsystem_position.ffill() - buffer.ffill()
-
-    subsystem_position = subsystem_position.round()
-    top_pos = top_pos.round()
-    bottom_pos = bottom_pos.round()
-    current_position = subsystem_position.values[0]
-    if np.isnan(current_position):
-        current_position = 0.0
-    buffered_position_list = [current_position]
-    for index in range(len(subsystem_position))[1:]:
-        current_position = apply_buffer_for_single_period(current_position, subsystem_position.values[index],
-                                                          top_pos.values[index], bottom_pos.values[index])
-        buffered_position_list.append(current_position)
-    buffered_position = pd.Series(buffered_position_list, index=subsystem_position.index)
-    return buffered_position
-
-
-def apply_buffer_for_single_period(last_position, optimal_position, top_pos, bot_pos, trade_to_edge=True):
-    if last_position > top_pos:
-        if trade_to_edge:
-            return top_pos
-        else:
-            return optimal_position
-    elif last_position < bot_pos:
-        if trade_to_edge:
-            return bot_pos
-        else:
-            return optimal_position
-    else:
-        return last_position
-
-
-from systems.accounts.pandl_calculators.pandl_cash_costs import pandlCalculationWithCashCostsAndFills
 
 
 def get_stdev_estimator_for_instrument_weight(data_for_analysis, fit_end):
@@ -564,78 +483,103 @@ def get_corr_estimator_for_instrument_weight(data_for_analysis, fit_end):
 
 ############################################################################################# 分割线
 
-def get_turnover_for_forecast(instrument_code, Lfast, Lslow):
-    forecast = get_capped_forecast(instrument_code, Lfast, Lslow)
-    daily_forecast = forecast.resample('1B').last()
-    daily_y = pd.Series(np.full(daily_forecast.shape[0], 10.0), daily_forecast.index)
-    daily_forecast_normalised_for_y = daily_forecast / daily_y.ffill()
-    avg_daily = float(daily_forecast_normalised_for_y.diff().abs().mean())
-    turnover = avg_daily * 256
-    return turnover
 
-
-def get_turnover(x_series, y, smooth_y_days=250):
-    daily_x = x_series.resample('1B').last()
-    if isinstance(y, float) or isinstance(y, int):
-        daily_y = pd.Series(np.full(daily_x.shape[0], float(y)), daily_x.index)
+def apply_buffer_for_single_period(last_position, optimal_position, top_pos, bot_pos, trade_to_edge=True):
+    if last_position > top_pos:
+        if trade_to_edge:
+            return top_pos
+        else:
+            return optimal_position
+    elif last_position < bot_pos:
+        if trade_to_edge:
+            return bot_pos
+        else:
+            return optimal_position
     else:
-        daily_y = y.reindex(daily_x.index, method='ffill')
-        daily_y = daily_y.ewm(smooth_y_days, min_periods=2).mean()
-    daily_x_normalised_for_y = daily_x / daily_y.ffill()
-    avg_daily = float(daily_x_normalised_for_y.diff().abs().mean())
-    turnover = avg_daily * 256
-    return turnover
+        return last_position
 
 
-def get_turnover_dict_for_single_rule(Lfast, Lslow):
-    turnover_dict_single_rule = {}
-    for instrument in my_config.instruments:
-        turnover = get_turnover_for_forecast(instrument, Lfast, Lslow)
-        turnover_dict_single_rule[instrument] = turnover
-    return turnover_dict_single_rule
+def get_avg_position_at_subsystem_level(instrument_code, capital=1000000, perc_vol_target=16):
+    instr_value_vol = get_instrument_value_vol(instrument_code)
+    annual_cash_vol_target = capital * perc_vol_target / 100
+    daily_cash_vol_target = annual_cash_vol_target / 16
+    vol_scalar = daily_cash_vol_target / instr_value_vol
+    return vol_scalar
 
 
-def get_turnover_dict_for_rules(rule_list=[['ewmac32', 32, 128], ['ewmac8', 8, 32]]):
-    turnover_dict = {}
-    for rule in rule_list:
-        turnover_dict_single_rule = get_turnover_dict_for_single_rule(rule[1], rule[2])
-        turnover_dict[rule[0]] = turnover_dict_single_rule
-    return turnover_dict
+def get_subsystem_position(instrument_code):
+    forecast32 = get_capped_forecast(instrument_code, 32, 128)
+    capped_combined_forecast = get_combined_forecast(instrument_code)
+
+    vol = get_avg_position_at_subsystem_level(instrument_code)
+    vol = vol.reindex(forecast32.index, method='ffill')
+
+    subsystem_position_raw = vol * capped_combined_forecast / 10.0
+    return subsystem_position_raw
 
 
-def get_portfolio_turnover():
-    turnover_list = []
-    for instrument in my_config.instruments:
-        subsystem_position = get_subsystem_position(instrument)
-        vol_scalar = get_avg_position_at_subsystem_level(instrument)
-        turnover = get_turnover(subsystem_position, vol_scalar)
-        turnover_list.append(turnover)
-    return turnover_list
+def process_instrument_pnl(instrument):
+    subsystem_position = get_subsystem_position(instrument)
+    buffered_position = apply_buffered_position(instrument, subsystem_position)
+    daily_pnl = calcuate_instrument_pnl(instrument, buffered_position)
+    return daily_pnl
 
 
-def pandl_calculator_for_subsystem_with_cash_costs(instrument_code):
-    raw_costs = get_raw_cost_data(instrument_code)
-    buffered_position = get_buffered_positions(instrument_code)
+def main(my_config):
+    instruments = my_config.instruments
 
-    price = get_daily_price(instrument_code)
-    block_value, block_move_size = get_block_value(instrument_code)
-    roll_parameters = get_roll_parameters(instrument_code)
-    rolls_per_year = roll_parameters.rolls_per_year_in_hold_cycle()
-    capital = 1000000.0
+    pnl_list = [process_instrument_pnl(instrument) for instrument in instruments]
+    pnl_df = pd.concat(pnl_list, axis=1)
+    pnl_df.columns = instruments
+
+    weight = caculate_instrument_weights(pnl_df)
+    print(weight)
+
+    return
+
+
+def apply_buffered_position(instrument, subsystem_position):
+    vol_scalar = get_avg_position_at_subsystem_level(instrument)
+    vol_scalar = vol_scalar.reindex(subsystem_position.index).ffill()
+    avg_position = vol_scalar * 1.0 * 1.0  # 乘的是instr weight和idm, 目前为default 1
+    buffer_size = 0.10
+    buffer = avg_position * buffer_size
+    top_pos = subsystem_position.ffill() + buffer.ffill()
+    bottom_pos = subsystem_position.ffill() - buffer.ffill()
+    subsystem_position = subsystem_position.round()
+    top_pos = top_pos.round()
+    bottom_pos = bottom_pos.round()
+    current_position = subsystem_position.values[0]
+    if np.isnan(current_position):
+        current_position = 0.0
+    buffered_position_list = [current_position]
+    for index in range(len(subsystem_position))[1:]:
+        current_position = apply_buffer_for_single_period(current_position, subsystem_position.values[index],
+                                                          top_pos.values[index], bottom_pos.values[index])
+        buffered_position_list.append(current_position)
+    buffered_position = pd.Series(buffered_position_list, index=subsystem_position.index)
+    return buffered_position
+
+
+def calcuate_instrument_pnl(instrument, position):
+    price = get_daily_price(instrument)
+    block_value, block_move_size = get_block_value(instrument)
     fx = pd.Series(1.0, index=price.index)
+    pnl_in_points = calculate_pandl(positions=position, prices=price)
+    pnl_in_ccy = pnl_in_points * block_move_size
+    fx_aligned = fx.reindex(pnl_in_ccy.index, method="ffill")
+    pnl = pnl_in_ccy * fx_aligned
+    pnl.index = pd.to_datetime(pnl.index)
+    daily_pnl = pnl.resample("B").sum()
+    return daily_pnl
 
-    pandl_calculator = pandlCalculationWithCashCostsAndFills(price, raw_costs=raw_costs,
-                                                             positions=buffered_position, capital=capital,
-                                                             value_per_point=block_move_size,
-                                                             vol_normalise_currency_costs=True,
-                                                             rolls_per_year=rolls_per_year, delayfill=True,
-                                                             roundpositions=True, fx=fx)
-    return pandl_calculator
 
+def caculate_instrument_weights(pnl_df):
+    daily_pnl = pnl_df.resample("1B").sum()
+    daily_pnl[daily_pnl == 0.0] = np.nan
 
-def caculate_instrument_weights(daily_ret):
-    instrument_number = len(daily_ret.columns)
-    weekly_ret = daily_ret.resample('W').sum()  # SP500_micro 的一些数值不对，其他的都能对的上。怀疑是不是一些nan被填充了
+    instrument_number = len(daily_pnl.columns)
+    weekly_ret = daily_pnl.resample('W').sum()  # SP500_micro 的一些数值不对，其他的都能对的上。怀疑是不是一些nan被填充了
     fit_end = weekly_ret.index[-1]
     norm_stdev, _ = get_stdev_estimator_for_instrument_weight(weekly_ret, fit_end)
     norm_mean = [0.5 * asset_stdev for asset_stdev in norm_stdev]
@@ -650,30 +594,16 @@ def caculate_instrument_weights(daily_ret):
     return weight
 
 
-def calculate_instrument_pnl(instrument):
-    pandl_calculator = pandl_calculator_for_subsystem_with_cash_costs(instrument)
-    curve = accountCurve(pandl_calculator)
-    calculator = curve.pandl_calculator_with_costs
-    pnl = calculator.as_pd_series(percent=False, curve_type=GROSS_CURVE)
-    pnl.index = pd.to_datetime(pnl.index)
-    daily_pnl = pnl.resample("B").sum()
-    return daily_pnl
-
-
-def get_instrument_weight(my_config):
-    instruments = my_config.instruments
-
-    instrument_pnl = [calculate_instrument_pnl(instrument) for instrument in instruments]
-    df_pnl = pd.concat(instrument_pnl, axis=1)
-    df_pnl.columns = instruments
-
-    curves = df_pnl.resample("1B").sum()
-    curves[curves == 0.0] = np.nan
-    weight = caculate_instrument_weights(curves)
-    print(weight)
-
-    return
+def calculate_pandl(positions: pd.Series, prices: pd.Series):
+    pos_series = positions.groupby(positions.index).last()
+    both_series = pd.concat([pos_series, prices], axis=1)
+    both_series.columns = ["positions", "prices"]
+    both_series = both_series.ffill()
+    price_returns = both_series.prices.diff()
+    returns = both_series.positions.shift(1) * price_returns
+    returns[returns.isna()] = 0.0
+    return returns
 
 
 if __name__ == '__main__':
-    get_instrument_weight(my_config)
+    main(my_config)

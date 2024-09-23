@@ -1,8 +1,8 @@
 import numpy as np
 import pandas as pd
 
-from refactory.submission import get_capped_forecast, my_config, get_subsystem_position, \
-    get_avg_position_at_subsystem_level
+from refactory.submission import get_capped_forecast, my_config, calculate_avg_position, get_net_returns, \
+    get_smoothed_weights, get_div_mult
 
 
 def get_turnover_for_forecast(instrument_code, Lfast, Lslow):
@@ -48,7 +48,39 @@ def get_portfolio_turnover():
     turnover_list = []
     for instrument in my_config.instruments:
         subsystem_position = get_subsystem_position(instrument)
-        vol_scalar = get_avg_position_at_subsystem_level(instrument)
+        vol_scalar = calculate_avg_position(instrument)
         turnover = get_turnover(subsystem_position, vol_scalar)
         turnover_list.append(turnover)
     return turnover_list
+
+
+def get_subsystem_position(instrument_code):
+    forecast32 = get_capped_forecast(instrument_code, 32, 128)
+    capped_combined_forecast = get_combined_forecast(instrument_code)
+
+    vol = calculate_avg_position(instrument_code)
+    vol = vol.reindex(forecast32.index, method='ffill')
+
+    subsystem_position_raw = vol * capped_combined_forecast / 10.0
+    return subsystem_position_raw
+
+
+def get_combined_forecast(instrument_code):
+    net_returns = get_net_returns()
+    forecast8 = get_capped_forecast(instrument_code, 8, 32)
+    forecast8 = forecast8.rename('ewmac8')
+    forecast32 = get_capped_forecast(instrument_code, 32, 128)
+    forecast32 = forecast32.rename('ewmac32')
+    df = pd.concat([forecast8, forecast32], axis=1)  # Forecast 没有问题
+
+    weights = get_smoothed_weights(instrument_code, net_returns)
+    weights.rename(columns={0: 'ewmac32', 1: 'ewmac8'}, inplace=True)
+    weights = weights[['ewmac8', 'ewmac32']]
+    weights.index = df.index
+    forecast_div_multiplier = get_div_mult(instrument_code, weights)
+
+    raw_weighted_forecast = weights * df
+    raw_weighted_forecast = raw_weighted_forecast.sum(axis=1)
+    combined_forecast = raw_weighted_forecast * forecast_div_multiplier
+    capped_combined_forecast = combined_forecast.clip(20, -20)
+    return capped_combined_forecast

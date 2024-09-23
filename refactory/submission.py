@@ -415,27 +415,6 @@ def get_instrument_value_vol(instrument_code):
     return instr_value_vol
 
 
-def get_combined_forecast(instrument_code):
-    net_returns = get_net_returns()
-    forecast8 = get_capped_forecast(instrument_code, 8, 32)
-    forecast8 = forecast8.rename('ewmac8')
-    forecast32 = get_capped_forecast(instrument_code, 32, 128)
-    forecast32 = forecast32.rename('ewmac32')
-    df = pd.concat([forecast8, forecast32], axis=1)  # Forecast 没有问题
-
-    weights = get_smoothed_weights(instrument_code, net_returns)
-    weights.rename(columns={0: 'ewmac32', 1: 'ewmac8'}, inplace=True)
-    weights = weights[['ewmac8', 'ewmac32']]
-    weights.index = df.index
-    forecast_div_multiplier = get_div_mult(instrument_code, weights)
-
-    raw_weighted_forecast = weights * df
-    raw_weighted_forecast = raw_weighted_forecast.sum(axis=1)
-    combined_forecast = raw_weighted_forecast * forecast_div_multiplier
-    capped_combined_forecast = combined_forecast.clip(20, -20)
-    return capped_combined_forecast
-
-
 ############################################################################################# 分割线
 
 
@@ -499,29 +478,33 @@ def apply_buffer_for_single_period(last_position, optimal_position, top_pos, bot
         return last_position
 
 
-def get_avg_position_at_subsystem_level(instrument_code, capital=1000000, perc_vol_target=16):
-    instr_value_vol = get_instrument_value_vol(instrument_code)
-    annual_cash_vol_target = capital * perc_vol_target / 100
-    daily_cash_vol_target = annual_cash_vol_target / 16
-    vol_scalar = daily_cash_vol_target / instr_value_vol
-    return vol_scalar
-
-
-def get_subsystem_position(instrument_code):
-    forecast32 = get_capped_forecast(instrument_code, 32, 128)
-    capped_combined_forecast = get_combined_forecast(instrument_code)
-
-    vol = get_avg_position_at_subsystem_level(instrument_code)
-    vol = vol.reindex(forecast32.index, method='ffill')
-
-    subsystem_position_raw = vol * capped_combined_forecast / 10.0
-    return subsystem_position_raw
-
-
 def process_instrument_pnl(instrument):
-    subsystem_position = get_subsystem_position(instrument)
-    buffered_position = apply_buffered_position(instrument, subsystem_position)
+    net_returns = get_net_returns()
+    forecast8 = get_capped_forecast(instrument, 8, 32)
+    forecast8 = forecast8.rename('ewmac8')
+    forecast32 = get_capped_forecast(instrument, 32, 128)
+    forecast32 = forecast32.rename('ewmac32')
+    df = pd.concat([forecast8, forecast32], axis=1)  # Forecast 没有问题
+    weights = get_smoothed_weights(instrument, net_returns)
+    weights.rename(columns={0: 'ewmac32', 1: 'ewmac8'}, inplace=True)
+    weights = weights[['ewmac8', 'ewmac32']]
+    weights.index = df.index
+    forecast_div_multiplier = get_div_mult(instrument, weights)
+    raw_weighted_forecast = weights * df
+    raw_weighted_forecast = raw_weighted_forecast.sum(axis=1)
+    combined_forecast = raw_weighted_forecast * forecast_div_multiplier
+    forecast = combined_forecast.clip(20, -20)
+    capped_combined_forecast = forecast
+
+    avg_position = calculate_avg_position(instrument)
+
+    avg_position = avg_position.reindex(capped_combined_forecast.index, method='ffill')
+    subsystem_position_raw = avg_position * capped_combined_forecast / 10.0
+
+    buffered_position = apply_buffered_position(instrument, subsystem_position_raw)
+
     daily_pnl = calcuate_instrument_pnl(instrument, buffered_position)
+
     return daily_pnl
 
 
@@ -538,8 +521,16 @@ def main(my_config):
     return
 
 
+def calculate_avg_position(instrument_code, capital=1000000, perc_vol_target=16):
+    instr_value_vol = get_instrument_value_vol(instrument_code)
+    annual_cash_vol_target = capital * perc_vol_target / 100
+    daily_cash_vol_target = annual_cash_vol_target / 16
+    vol_scalar = daily_cash_vol_target / instr_value_vol
+    return vol_scalar
+
+
 def apply_buffered_position(instrument, subsystem_position):
-    vol_scalar = get_avg_position_at_subsystem_level(instrument)
+    vol_scalar = calculate_avg_position(instrument)
     vol_scalar = vol_scalar.reindex(subsystem_position.index).ffill()
     avg_position = vol_scalar * 1.0 * 1.0  # 乘的是instr weight和idm, 目前为default 1
     buffer_size = 0.10

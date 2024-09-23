@@ -651,14 +651,14 @@ def caculate_instrument_weights(daily_ret):
 
 
 def get_instrument_weight(my_config):
-    dict_of_pandl_across_subsystems = {}
+    dict_of_account_curves = {}
     for instrument in my_config.instruments:
         pandl_calculator = pandl_calculator_for_subsystem_with_cash_costs(instrument)
-        dict_of_pandl_across_subsystems[instrument] = accountCurve(pandl_calculator)
-    dict_of_pandl_across_subsystems = dictOfAccountCurves(dict_of_pandl_across_subsystems)
+        dict_of_account_curves[instrument] = accountCurve(pandl_calculator)
+    dict_of_account_curves = dictOfAccountCurves(dict_of_account_curves)
 
     capital = 1000000
-    account_curve_group = accountCurveGroup(dict_of_pandl_across_subsystems, capital=capital, weighted=False)
+    account_curve_group = accountCurveGroup(dict_of_account_curves, capital=capital, weighted=False)
 
     gross = getattr(account_curve_group, "gross")
     account_curve = gross.to_frame()

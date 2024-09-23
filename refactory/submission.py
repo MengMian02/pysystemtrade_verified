@@ -677,8 +677,11 @@ def get_instrument_weight(my_config):
 
 
 def iter_method(gross, item):
-    kwargs = gross.kwargs
-    return accountCurve(gross.get_pandl_calculator_for_item(item), **kwargs)
+    calculator = gross.dict_of_account_curves[item].pandl_calculator_with_costs
+    pnl = calculator.as_pd_series(percent=False, curve_type=GROSS_CURVE)
+    pnl.index = pd.to_datetime(pnl.index)
+    daily_pnl = pnl.resample("B").sum()
+    return daily_pnl
 
 
 def method_name(gross):

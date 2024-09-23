@@ -1,7 +1,16 @@
 import numpy as np
 import pandas as pd
+from datetime import datetime
 
+from sysdata.config.configdata import Config
 from sysdata.sim.csv_futures_sim_data import csvFuturesSimData
+from sysquant.returns import dictOfReturnsForOptimisation
+from sysquant.returns import dictOfReturnsForOptimisationWithCosts
+from sysquant.returns import returnsForOptimisationWithCosts
+from systems.accounts.curves.account_curve import accountCurve
+from systems.accounts.curves.account_curve_group import accountCurveGroup
+from systems.accounts.curves.dict_of_account_curves import dictOfAccountCurves
+from systems.accounts.pandl_calculators.pandl_SR_cost import pandlCalculationWithSRCosts
 
 data = csvFuturesSimData()
 
@@ -103,17 +112,6 @@ def pandl_for_instrument_forecast(forecast, capital, risk_target,
     notional_position = aligned_ave * normalised_forecast
     return notional_position, ave_notional_position, block_move_price
 
-
-from systems.accounts.pandl_calculators.pandl_SR_cost import pandlCalculationWithSRCosts
-from systems.accounts.curves.account_curve import accountCurve
-from systems.accounts.curves.dict_of_account_curves import dictOfAccountCurves
-from systems.accounts.curves.account_curve_group import accountCurveGroup
-from sysquant.returns import returnsForOptimisationWithCosts
-from sysquant.returns import dictOfReturnsForOptimisation
-from sysquant.returns import dictOfReturnsForOptimisationWithCosts
-from datetime import datetime
-
-from sysdata.config.configdata import Config
 
 my_config = Config()
 my_config.instruments = ["CORN", "SOFR", "SP500_micro", 'US10']
@@ -420,11 +418,15 @@ def get_price_vol(instrument_code):
 
 
 def get_block_value(instrument_code):
-    instr_object = data.db_futures_instrument_data.get_instrument_data(instrument_code)  # 基础品种信息
+    instr_object = get_instrument_info(instrument_code)  # 基础品种信息
     daily_carry_price = get_raw_carry_data(instrument_code)
     block_move_price = instr_object.meta_data.Pointsize
     block_value = daily_carry_price.ffill() * block_move_price * 0.01
     return block_value, block_move_price
+
+
+def get_instrument_info(instrument_code):
+    return data.db_futures_instrument_data.get_instrument_data(instrument_code)
 
 
 def get_instrument_value_vol(instrument_code):
@@ -625,7 +627,7 @@ def get_portfolio_turnover():
     return turnover_list
 
 
-def pandl_calculator_for_subsystem_with_cash_costs(instrument_code):
+def pandl_calculator_for_subsystem_with_cash_costs(instrument_code, data):
     raw_costs = get_raw_cost_data(instrument_code)
     buffered_position = get_buffered_positions(instrument_code)
 
@@ -645,10 +647,10 @@ def pandl_calculator_for_subsystem_with_cash_costs(instrument_code):
     return pandl_calculator
 
 
-def get_instrument_weight(my_config):
+def get_instrument_weight(my_config, data):
     dict_of_pandl_across_subsystems = {}
     for instrument in my_config.instruments:
-        pandl_calculator = pandl_calculator_for_subsystem_with_cash_costs(instrument)
+        pandl_calculator = pandl_calculator_for_subsystem_with_cash_costs(instrument, data)
         dict_of_pandl_across_subsystems[instrument] = accountCurve(pandl_calculator)
     dict_of_pandl_across_subsystems = dictOfAccountCurves(dict_of_pandl_across_subsystems)
 
@@ -684,4 +686,4 @@ def get_instrument_weight(my_config):
 
 
 if __name__ == '__main__':
-    get_instrument_weight(my_config)
+    get_instrument_weight(my_config, data)

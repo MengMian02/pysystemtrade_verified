@@ -9,7 +9,6 @@ from sysdata.config.configdata import Config
 from sysquant.fitting_dates import fitDates, listOfFittingDates
 from sysquant.returns import dictOfReturnsForOptimisationWithCosts
 from systems.accounts.curves.account_curve import accountCurve
-from systems.accounts.curves.account_curve_group import accountCurveGroup
 from systems.accounts.curves.dict_of_account_curves import dictOfAccountCurves
 from systems.accounts.pandl_calculators.pandl_SR_cost import pandlCalculationWithSRCosts
 from systems.accounts.pandl_calculators.pandl_generic_costs import GROSS_CURVE
@@ -383,8 +382,8 @@ def get_capped_forecast(instrument_code, Lfast, Lslow, upper_cap=20):
     return capped_scaled_forecast
 
 
-def get_item_(gross, asset_name):
-    costs = gross.dict_of_account_curves[asset_name].pandl_calculator_with_costs
+def _item_(curve):
+    costs = curve.pandl_calculator_with_costs
     return accountCurve(costs, curve_type=GROSS_CURVE, weighted=False)
 
 
@@ -426,10 +425,8 @@ def get_returns_for_optimisation(instrument_code, capital=1000000, risk_target=0
 
     dict_of_account_curves = dictOfAccountCurves(dict_of_pandl_by_rule)
 
-    gross = accountCurveGroup(dict_of_account_curves, capital, curve_type=GROSS_CURVE, weighted=False)
-
     asset_columns = list(dict_of_account_curves.keys())
-    data_as_list = [get_item_(gross, asset_name) for asset_name in asset_columns]
+    data_as_list = [_item_(dict_of_account_curves[asset_name]) for asset_name in asset_columns]
     curve = pd.concat(data_as_list, axis=1)
     curve.columns = asset_columns
 

@@ -5,6 +5,8 @@ from datetime import datetime
 from scipy.optimize import minimize
 
 from refactory.data_source import get_instrument_info, get_daily_price, get_raw_carry_data
+from syscore.pandas.list_of_df import listOfDataFrames
+from syscore.pandas.pdutils import dataframe_pad
 from sysdata.config.configdata import Config
 from sysquant.fitting_dates import fitDates, listOfFittingDates
 from sysquant.returns import dictOfReturnsForOptimisation
@@ -435,8 +437,25 @@ def get_net_return():
     for instrument1 in my_config.instruments:
         gross_returns_dict[instrument1] = get_returns_for_optimisation(instrument1)
     gross_returns_dict = dictOfReturnsForOptimisation(gross_returns_dict)
-    returns = gross_returns_dict.single_resampled_set_of_returns('W')
-    return returns
+
+    returns_as_list = listOfDataFrames(gross_returns_dict.values())
+    returns_as_list_downsampled = returns_as_list.resample_sum('W')
+    returns_as_list_common_ts = returns_as_list_downsampled.reindex_to_common_index()
+
+    common_columns = returns_as_list_common_ts.common_columns()
+    data_reindexed = [
+        dataframe_pad(data_item, common_columns, pad_with_value=0.0)
+        for data_item in returns_as_list_common_ts
+    ]
+    aligned_data = listOfDataFrames(data_reindexed)
+
+    for offset_value, data_item in enumerate(aligned_data):
+        data_item.index = data_item.index + pd.Timedelta("%dus" % offset_value)
+
+    stacked_data = pd.concat(aligned_data, axis=0)
+    stacked_data = stacked_data.sort_index()
+
+    return stacked_data
 
 
 def process_instrument_pnl(instrument):

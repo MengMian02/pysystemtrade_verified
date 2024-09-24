@@ -13,6 +13,62 @@ my_config = Config()
 my_config.instruments = ["CORN", "SOFR", "SP500_micro", 'US10']
 
 
+def calculate_forecasts(instrument):
+    forecast8 = get_capped_forecast(instrument, 8, 32)
+    forecast8 = forecast8.rename('ewmac8')
+    forecast32 = get_capped_forecast(instrument, 32, 128)
+    forecast32 = forecast32.rename('ewmac32')
+    forecast_df = pd.concat([forecast8, forecast32], axis=1)  # Forecast 没有问题
+    return forecast_df
+
+def get_returns_for_optimisation(instrument_code, capital=1000000, risk_target=0.16,
+                                 target_abs_forecast=10):
+
+    ewmac32 = get_capped_forecast(instrument_code, 32, 128)
+    ewmac8 = get_capped_forecast(instrument_code, 8, 32)
+    forecast1 = [ewmac32, ewmac8]
+    forecast_name = ['ewmac32', 'ewmac8']
+
+    price = get_daily_price(instrument_code)
+    daily_returns = price.diff()
+    daily_returns_volatility = calculate_mixed_volatility(daily_returns, slow_vol_years=10)
+
+    data_as_list = []
+    for forecast in forecast1:
+        normalised_forecast = forecast / target_abs_forecast
+        daily_risk_target = risk_target / (256 ** 0.5)
+        daily_cash_vol_target = daily_risk_target * capital
+        block_move_price = get_block_move_price(instrument_code)
+        ave_notional_position = daily_cash_vol_target / (daily_returns_volatility * block_move_price)
+        aligned_ave = ave_notional_position.reindex(normalised_forecast.index, method='ffill')
+        notional_position = aligned_ave * normalised_forecast
+
+        pandl_in_points = calculate_pandl(positions=notional_position, prices=price)
+        as_pd_series = pandl_in_points * block_move_price
+        as_pd_series.index = pd.to_datetime(as_pd_series.index)
+        pd_series_at_frequency = as_pd_series.resample("B").sum()
+        curve = pd_series_at_frequency
+
+        data_as_list.append(curve)
+
+    curve_df = pd.concat(data_as_list, axis=1)
+    curve_df.columns = forecast_name
+
+    daily_curve = curve_df.resample('1B').sum()
+    daily_curve[daily_curve == 0.0] = np.nan
+
+    return daily_curve
+
+
+def get_capped_forecast(instrument_code, Lfast, Lslow, upper_cap=20):
+    scalar = get_forecast_scalar(instrument_code, Lfast, Lslow)
+    raw_forecast = ewmac_forecast(instrument_code, Lfast, Lslow)
+    scaled_forecast = scalar * raw_forecast
+    lower_cap = -upper_cap
+    capped_forecast = scaled_forecast.clip(lower=lower_cap, upper=upper_cap)
+    return capped_forecast
+
+
 # 策略
 def ewmac_forecast(instrument_code, Lfast, Lslow, min_periods=1):
     price = get_daily_price(instrument_code)
@@ -34,23 +90,6 @@ def get_forecast_scalar(instrument_code, Lfast, Lslow, window=250000,
     if backfill:
         scaling_factor = scaling_factor.bfill()
     return scaling_factor
-
-
-############################################################################################# 分割线
-
-
-def addem(weights):
-    return 1.0 - sum(weights)
-
-
-def neg_SR(weights, sigma, mus):
-    estimated_returns = np.dot(weights, mus)[0]
-    stdev = weights.dot(sigma).dot(weights.transpose()) ** 0.5
-    sr = -estimated_returns / stdev
-    return sr
-
-
-############################################################################################# 分割线
 
 
 def get_div_mult(instrument_code, weights):
@@ -114,46 +153,6 @@ def get_div_mult(instrument_code, weights):
 ############################################################################################# 分割线
 
 
-def get_returns_for_optimisation(instrument_code, capital=1000000, risk_target=0.16,
-                                 target_abs_forecast=10):
-    price = get_daily_price(instrument_code)
-    daily_returns = price.diff()
-
-    daily_returns_volatility = calculate_mixed_volatility(daily_returns, slow_vol_years=10)
-
-    ewmac32 = get_capped_forecast(instrument_code, 32, 128)
-    ewmac8 = get_capped_forecast(instrument_code, 8, 32)
-    forecast = [ewmac32, ewmac8]
-    forecast_name = ['ewmac32', 'ewmac8']
-
-    data_as_list = []
-
-    for forecast in forecast:
-        normalised_forecast = forecast / target_abs_forecast
-        daily_risk_target = risk_target / (256 ** 0.5)
-        daily_cash_vol_target = daily_risk_target * capital
-        block_move_price = get_block_move_price(instrument_code)
-        ave_notional_position = daily_cash_vol_target / (daily_returns_volatility * block_move_price)
-        aligned_ave = ave_notional_position.reindex(normalised_forecast.index, method='ffill')
-        notional_position = aligned_ave * normalised_forecast
-
-        pandl_in_points = calculate_pandl(positions=notional_position, prices=price)
-        as_pd_series = pandl_in_points * block_move_price
-        as_pd_series.index = pd.to_datetime(as_pd_series.index)
-        pd_series_at_frequency = as_pd_series.resample("B").sum()
-        curve = pd_series_at_frequency
-
-        data_as_list.append(curve)
-
-    curve_df = pd.concat(data_as_list, axis=1)
-    curve_df.columns = forecast_name
-
-    daily_curve = curve_df.resample('1B').sum()
-    daily_curve[daily_curve == 0.0] = np.nan
-
-    return daily_curve
-
-
 def get_net_return():
     gross_returns_dict = {}
     for instrument1 in my_config.instruments:
@@ -178,11 +177,7 @@ def get_net_return():
 
 
 def process_instrument_pnl(instrument):
-    forecast8 = get_capped_forecast(instrument, 8, 32)
-    forecast8 = forecast8.rename('ewmac8')
-    forecast32 = get_capped_forecast(instrument, 32, 128)
-    forecast32 = forecast32.rename('ewmac32')
-    forecast_df = pd.concat([forecast8, forecast32], axis=1)  # Forecast 没有问题
+    forecast_df = calculate_forecasts(instrument)
 
     returns = get_net_return()
 
@@ -238,6 +233,7 @@ def process_instrument_pnl(instrument):
     return daily_pnl
 
 
+
 def main(my_config):
     instruments = my_config.instruments
 
@@ -276,15 +272,6 @@ def get_weight(data_for_analysis, date_period, fit_end_list, strategy_number=2):
     ans = minimize(neg_SR, start_weights, (sigma, mus), method='SLSQP', constraints=cdict, bounds=bounds, tol=0.00001)
     weight = ans['x']
     return weight
-
-
-def get_capped_forecast(instrument_code, Lfast, Lslow, upper_cap=20):
-    scalar = get_forecast_scalar(instrument_code, Lfast, Lslow)
-    raw_forecast = ewmac_forecast(instrument_code, Lfast, Lslow)
-    scaled_forecast = scalar * raw_forecast
-    lower_cap = -upper_cap
-    capped_forecast = scaled_forecast.clip(lower=lower_cap, upper=upper_cap)
-    return capped_forecast
 
 
 def calculate_avg_position(instrument_code, capital=1000000, perc_vol_target=16):
@@ -370,6 +357,23 @@ def caculate_instrument_weights(pnl_df):
     ans = minimize(neg_SR, start_weights, (sigma, mus), method='SLSQP', constraints=cdict, bounds=bounds, tol=0.00001)
     weight = ans['x']
     return weight
+
+
+############################################################################################# 分割线
+
+
+def addem(weights):
+    return 1.0 - sum(weights)
+
+
+def neg_SR(weights, sigma, mus):
+    estimated_returns = np.dot(weights, mus)[0]
+    stdev = weights.dot(sigma).dot(weights.transpose()) ** 0.5
+    sr = -estimated_returns / stdev
+    return sr
+
+
+############################################################################################# 分割线
 
 
 def calculate_pandl(positions: pd.Series, prices: pd.Series):

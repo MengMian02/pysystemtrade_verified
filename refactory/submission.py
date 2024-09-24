@@ -80,7 +80,7 @@ def calculate_factor_pnl(forecast, price, capital, block_move_price, risk_target
     return daily_pnl
 
 
-def process_factor_pnl(instrument_code, capital=1000000, risk_target=0.16, target_abs_forecast=10):
+def process_factors_pnl(instrument_code, capital=1000000, risk_target=0.16, target_abs_forecast=10):
     price = get_daily_price(instrument_code)
     forecast_df = calculate_forecasts(price)
     forecast_df = forecast_df / target_abs_forecast
@@ -94,7 +94,7 @@ def process_factor_pnl(instrument_code, capital=1000000, risk_target=0.16, targe
 def get_net_return():
     gross_returns_dict = {}
     for instrument1 in my_config.instruments:
-        gross_returns_dict[instrument1] = process_factor_pnl(instrument1)
+        gross_returns_dict[instrument1] = process_factors_pnl(instrument1)
 
     ret_df_list = gross_returns_dict.values()
 

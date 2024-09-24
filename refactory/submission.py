@@ -1,10 +1,9 @@
-from typing import List
-
 import numpy as np
 import pandas as pd
 from copy import copy
 from datetime import datetime
 from scipy.optimize import minimize
+from typing import List
 
 from refactory.data_source import get_instrument_info, get_daily_price, get_raw_carry_data
 from syscore.pandas.list_of_df import listOfDataFrames
@@ -432,12 +431,12 @@ def get_returns_for_optimisation(instrument_code, capital=1000000, risk_target=0
 
     return account_curve
 
-def dataframe_pad(
-    starting_df: pd.DataFrame,
-    target_column_list: List[str],
-    pad_with_value: float = 0.0,
-) -> pd.DataFrame:
 
+def dataframe_pad(
+        starting_df: pd.DataFrame,
+        target_column_list: List[str],
+        pad_with_value: float = 0.0,
+) -> pd.DataFrame:
     new_columns = {
         col: starting_df[col] if col in starting_df.columns else pd.Series(
             np.full(starting_df.shape[0], pad_with_value), index=starting_df.index
@@ -455,20 +454,18 @@ def get_net_return():
     gross_returns_dict = dictOfReturnsForOptimisation(gross_returns_dict)
 
     returns_as_list = listOfDataFrames(gross_returns_dict.values())
-    returns_as_list_downsampled = returns_as_list.resample_sum('W')
-    returns_as_list_common_ts = returns_as_list_downsampled.reindex_to_common_index()
+    data_resampled = [item.resample('W').sum() for item in returns_as_list]
+    returns = listOfDataFrames(data_resampled)
 
-    # common_columns = returns_as_list_common_ts.common_columns()
-    # aligned_data = [
-    #     dataframe_pad(data_item, common_columns, pad_with_value=0.0)
-    #     for data_item in returns_as_list_common_ts
-    # ]
-    aligned_data = returns_as_list_common_ts
+    from itertools import chain
+    all_indices_flattened = list(chain.from_iterable(data_item.index for data_item in returns))
+    common_unique_index = sorted(set(all_indices_flattened))
+    data_reindexed = [data_item.reindex(common_unique_index) for data_item in returns]
 
-    for offset_value, data_item in enumerate(aligned_data):
+    for offset_value, data_item in enumerate(data_reindexed):
         data_item.index = data_item.index + pd.Timedelta("%dus" % offset_value)
 
-    stacked_data = pd.concat(aligned_data, axis=0)
+    stacked_data = pd.concat(data_reindexed, axis=0)
     stacked_data = stacked_data.sort_index()
 
     return stacked_data

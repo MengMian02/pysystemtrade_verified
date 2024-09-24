@@ -44,3 +44,9 @@ def get_raw_cost_data(instrument_code):
     instrument_meta_data = instrument_data.meta_data
     instrument_costs = instrumentCosts.from_meta_data_and_spread_cost(instrument_meta_data, spread_costs)
     return instrument_costs
+
+
+def get_block_move_price(instrument_code):
+    instr_object = get_instrument_info(instrument_code)  # 基础品种信息
+    block_move_price = instr_object.meta_data.Pointsize
+    return block_move_price

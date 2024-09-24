@@ -4,7 +4,7 @@ from copy import copy
 from datetime import datetime
 from scipy.optimize import minimize
 
-from refactory.data_source import get_instrument_info, get_daily_price, get_raw_carry_data
+from refactory.data_source import get_instrument_info, get_daily_price, get_raw_carry_data, get_block_move_price
 from sysdata.config.configdata import Config
 from sysquant.fitting_dates import fitDates, listOfFittingDates
 from sysquant.returns import dictOfReturnsForOptimisationWithCosts
@@ -83,25 +83,6 @@ def mixed_vol_calc(daily_returns, days=35, min_periods=10, slow_vol_years=20,
 
 
 ############################################################################################# 分割线
-
-
-# 在设下起始资金量，目标波动的情况下，计算每天收益
-def pandl_for_instrument_forecast(forecast, capital, risk_target,
-                                  daily_returns_volatility, target_abs_forecast,
-                                  instrument_code):
-    normalised_forecast = forecast / target_abs_forecast
-
-    daily_risk_target = risk_target / (256 ** 0.5)
-    daily_cash_vol_target = daily_risk_target * capital
-
-    instr_object = get_instrument_info(instrument_code)  # 基础品种信息
-    block_move_price = instr_object.meta_data.Pointsize
-    instr_currency_vol = daily_returns_volatility * block_move_price
-    ave_notional_position = daily_cash_vol_target / instr_currency_vol
-
-    aligned_ave = ave_notional_position.reindex(normalised_forecast.index, method='ffill')
-    notional_position = aligned_ave * normalised_forecast
-    return notional_position, ave_notional_position, block_move_price
 
 
 my_config = Config()
@@ -381,9 +362,23 @@ def get_capped_forecast(instrument_code, Lfast, Lslow, upper_cap=20):
     return capped_scaled_forecast
 
 
-def _item_(curve):
-    costs = curve.pandl_calculator_with_costs
-    return accountCurve(costs, curve_type=GROSS_CURVE, weighted=False)
+# 在设下起始资金量，目标波动的情况下，计算每天收益
+def pandl_for_instrument_forecast(forecast, capital, risk_target,
+                                  daily_returns_volatility, target_abs_forecast,
+                                  instrument_code):
+    normalised_forecast = forecast / target_abs_forecast
+
+    daily_risk_target = risk_target / (256 ** 0.5)
+    daily_cash_vol_target = daily_risk_target * capital
+
+    instr_object = get_instrument_info(instrument_code)  # 基础品种信息
+    block_move_price = instr_object.meta_data.Pointsize
+    instr_currency_vol = daily_returns_volatility * block_move_price
+    ave_notional_position = daily_cash_vol_target / instr_currency_vol
+
+    aligned_ave = ave_notional_position.reindex(normalised_forecast.index, method='ffill')
+    notional_position = aligned_ave * normalised_forecast
+    return notional_position, ave_notional_position, block_move_price
 
 
 def get_returns_for_optimisation(instrument_code, capital=1000000, risk_target=0.16,
@@ -403,30 +398,33 @@ def get_returns_for_optimisation(instrument_code, capital=1000000, risk_target=0
 
     i = 0
     for forecast in forecast:
-        notional_position, ave_notional_position, value_per_point = (
-            pandl_for_instrument_forecast(forecast=forecast,
-                                          capital=capital,
-                                          risk_target=risk_target,
-                                          daily_returns_volatility=daily_returns_volatility,
-                                          target_abs_forecast=target_abs_forecast,
-                                          instrument_code=instrument_code))
+        normalised_forecast = forecast / target_abs_forecast
+        daily_risk_target = risk_target / (256 ** 0.5)
+        daily_cash_vol_target = daily_risk_target * capital
+        block_move_price = get_block_move_price(instrument_code)
+        ave_notional_position = daily_cash_vol_target / (daily_returns_volatility * block_move_price)
+        aligned_ave = ave_notional_position.reindex(normalised_forecast.index, method='ffill')
+        notional_position = aligned_ave * normalised_forecast
+
         pandl_calculator = pandlCalculationWithSRCosts(price,
                                                        SR_cost=0,
-                                                       positions=notional_position,
+                                                       positions=(notional_position),
                                                        fx=fx,
                                                        daily_returns_volatility=daily_returns_volatility,
-                                                       average_position=ave_notional_position,
+                                                       average_position=(ave_notional_position),
                                                        capital=capital,
-                                                       value_per_point=value_per_point,
+                                                       value_per_point=(block_move_price),
                                                        delayfill=True)
         account_curve = accountCurve(pandl_calculator)
+
         dict_of_pandl_by_rule[forecast_name[i]] = account_curve
         i += 1
 
-    asset_columns = list(dict_of_pandl_by_rule.keys())
-    data_as_list = [_item_(dict_of_pandl_by_rule[asset_name]) for asset_name in asset_columns]
+    data_as_list = [accountCurve(dict_of_pandl_by_rule[asset_name].pandl_calculator_with_costs, curve_type=GROSS_CURVE,
+                                 weighted=False) for asset_name in (forecast_name)]
+
     curve = pd.concat(data_as_list, axis=1)
-    curve.columns = asset_columns
+    curve.columns = forecast_name
 
     daily_curve = curve.resample('1B').sum()
     daily_curve[daily_curve == 0.0] = np.nan

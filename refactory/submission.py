@@ -3,10 +3,8 @@ import pandas as pd
 from copy import copy
 from datetime import datetime
 from scipy.optimize import minimize
-from typing import List
 
 from refactory.data_source import get_instrument_info, get_daily_price, get_raw_carry_data
-from syscore.pandas.list_of_df import listOfDataFrames
 from sysdata.config.configdata import Config
 from sysquant.fitting_dates import fitDates, listOfFittingDates
 from sysquant.returns import dictOfReturnsForOptimisation
@@ -432,35 +430,19 @@ def get_returns_for_optimisation(instrument_code, capital=1000000, risk_target=0
     return account_curve
 
 
-def dataframe_pad(
-        starting_df: pd.DataFrame,
-        target_column_list: List[str],
-        pad_with_value: float = 0.0,
-) -> pd.DataFrame:
-    new_columns = {
-        col: starting_df[col] if col in starting_df.columns else pd.Series(
-            np.full(starting_df.shape[0], pad_with_value), index=starting_df.index
-        )
-        for col in target_column_list
-    }
-    new_df = pd.DataFrame(new_columns)
-    return new_df
-
-
 def get_net_return():
     gross_returns_dict = {}
     for instrument1 in my_config.instruments:
         gross_returns_dict[instrument1] = get_returns_for_optimisation(instrument1)
     gross_returns_dict = dictOfReturnsForOptimisation(gross_returns_dict)
+    returns_as_list = gross_returns_dict.values()
 
-    returns_as_list = listOfDataFrames(gross_returns_dict.values())
-    data_resampled = [item.resample('W').sum() for item in returns_as_list]
-    returns = listOfDataFrames(data_resampled)
+    weekly_ret = [item.resample('W').sum() for item in returns_as_list]
 
     from itertools import chain
-    all_indices_flattened = list(chain.from_iterable(data_item.index for data_item in returns))
+    all_indices_flattened = list(chain.from_iterable(data_item.index for data_item in weekly_ret))
     common_unique_index = sorted(set(all_indices_flattened))
-    data_reindexed = [data_item.reindex(common_unique_index) for data_item in returns]
+    data_reindexed = [data_item.reindex(common_unique_index) for data_item in weekly_ret]
 
     for offset_value, data_item in enumerate(data_reindexed):
         data_item.index = data_item.index + pd.Timedelta("%dus" % offset_value)

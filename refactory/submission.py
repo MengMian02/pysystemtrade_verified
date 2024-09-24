@@ -432,46 +432,6 @@ def get_returns_for_optimisation(instrument_code, capital=1000000, risk_target=0
 
     return account_curve
 
-#
-# def dataframe_pad(
-#         starting_df: pd.DataFrame,
-#         target_column_list: List[str],
-#         pad_with_value: float = 0.0,
-# ) -> pd.DataFrame:
-#     """
-#     Takes a dataframe and adds extra columns if necessary so we end up with columns named column_list
-#
-#     >>> df = pd.DataFrame(dict(a=[1, 2, 3], b=[4 , 6, 5]), index=pd.date_range(datetime.datetime(2000,1,1),periods=3))
-#     >>> dataframe_pad(df, ['a','b','c'], pad_with_value=4.0)
-#                 a  b    c
-#     2000-01-01  1  4  4.0
-#     2000-01-02  2  6  4.0
-#     2000-01-03  3  5  4.0
-#     >>> dataframe_pad(df, ['a','c'])
-#                 a    c
-#     2000-01-01  1  0.0
-#     2000-01-02  2  0.0
-#     2000-01-03  3  0.0
-#     """
-#
-#     def _pad_column(column_name: str, starting_df: pd.DataFrame, pad_with_value: float):
-#         if column_name in starting_df.columns:
-#             return starting_df[column_name]
-#         else:
-#             return pd.Series(
-#                 np.full(starting_df.shape[0], pad_with_value), starting_df.index
-#             )
-#
-#     new_data = [
-#         _pad_column(column_name, starting_df, pad_with_value)
-#         for column_name in target_column_list
-#     ]
-#
-#     new_df = pd.concat(new_data, axis=1)
-#     new_df.columns = target_column_list
-#
-#     return new_df
-
 def dataframe_pad(
     starting_df: pd.DataFrame,
     target_column_list: List[str],
@@ -498,11 +458,12 @@ def get_net_return():
     returns_as_list_downsampled = returns_as_list.resample_sum('W')
     returns_as_list_common_ts = returns_as_list_downsampled.reindex_to_common_index()
 
-    common_columns = returns_as_list_common_ts.common_columns()
-    aligned_data = [
-        dataframe_pad(data_item, common_columns, pad_with_value=0.0)
-        for data_item in returns_as_list_common_ts
-    ]
+    # common_columns = returns_as_list_common_ts.common_columns()
+    # aligned_data = [
+    #     dataframe_pad(data_item, common_columns, pad_with_value=0.0)
+    #     for data_item in returns_as_list_common_ts
+    # ]
+    aligned_data = returns_as_list_common_ts
 
     for offset_value, data_item in enumerate(aligned_data):
         data_item.index = data_item.index + pd.Timedelta("%dus" % offset_value)

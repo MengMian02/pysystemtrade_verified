@@ -51,22 +51,21 @@ def get_returns_for_optimisation(instrument_code, capital=1000000, risk_target=0
 
 
 def calculate_forecasts(instrument):
-
     price = get_daily_price(instrument)
 
     raw_ewmac8 = ewmac(price, 8, 32, 1)
-    forecast8 = final_forecast(raw_ewmac8, price, 20)
-    forecast8 = forecast8.rename('ewmac8')
+    forecast8 = final_forecast('ewmac8', raw_ewmac8, price, 20)
 
     forecast = ewmac(price, 32, 128, 1)
-    forecast32 = final_forecast(forecast, price, 20)
-    forecast32 = forecast32.rename('ewmac32')
+    forecast32 = final_forecast('ewmac32', forecast, price, 20)
+
     forecast_df = pd.concat([forecast8, forecast32], axis=1)
     forecast_df.index = pd.to_datetime(forecast_df.index)
+
     return forecast_df
 
 
-def final_forecast(raw_forecast, price, upper_cap):
+def final_forecast(name, raw_forecast, price, upper_cap):
     raw_forecast[raw_forecast == 0] = np.nan
 
     vol = get_volatily(price)
@@ -77,6 +76,8 @@ def final_forecast(raw_forecast, price, upper_cap):
 
     lower_cap = -upper_cap
     capped_forecast = scaled_forecast.clip(lower=lower_cap, upper=upper_cap)
+
+    capped_forecast.rename(name, inplace=True)
 
     return capped_forecast
 

@@ -7,7 +7,6 @@ from scipy.optimize import minimize
 from refactory.data_source import get_instrument_info, get_daily_price, get_raw_carry_data
 from sysdata.config.configdata import Config
 from sysquant.fitting_dates import fitDates, listOfFittingDates
-from sysquant.returns import dictOfReturnsForOptimisation
 from sysquant.returns import dictOfReturnsForOptimisationWithCosts
 from systems.accounts.curves.account_curve import accountCurve
 from systems.accounts.curves.account_curve_group import accountCurveGroup
@@ -434,10 +433,10 @@ def get_net_return():
     gross_returns_dict = {}
     for instrument1 in my_config.instruments:
         gross_returns_dict[instrument1] = get_returns_for_optimisation(instrument1)
-    gross_returns_dict = dictOfReturnsForOptimisation(gross_returns_dict)
-    returns_as_list = gross_returns_dict.values()
 
-    weekly_ret = [item.resample('W').sum() for item in returns_as_list]
+    ret_df_list = gross_returns_dict.values()
+
+    weekly_ret = [item.resample('W').sum() for item in ret_df_list]
 
     from itertools import chain
     all_indices_flattened = list(chain.from_iterable(data_item.index for data_item in weekly_ret))

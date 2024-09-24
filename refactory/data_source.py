@@ -11,7 +11,9 @@ def get_instrument_info(instrument_code):
 
 
 def get_daily_price(instrument_code):
-    return source_data.daily_prices(instrument_code)
+    prices = source_data.daily_prices(instrument_code)
+    prices.index = pd.to_datetime(prices.index)
+    return prices
 
 
 def get_spread_cost(instrument_code):

@@ -55,10 +55,7 @@ def get_forecast_scalar(instrument_code, Lfast, Lslow, window=250000,
     return scaling_factor
 
 
-def get_capped_forecast(instrument_code, Lfast, Lslow, upper_cap=20):
-    # Return the capped and scaled forecast
-    scaled_forecast = (get_forecast_scalar(instrument_code, Lfast, Lslow)
-                       * ewmac_forecast(instrument_code, Lfast, Lslow))
+def cap_forecast(scaled_forecast, upper_cap):
     lower_cap = -upper_cap
     capped_scaled_forecast = scaled_forecast.clip(lower=lower_cap, upper=upper_cap)
     return capped_scaled_forecast
@@ -122,53 +119,6 @@ def get_pandl_forecast():
     return pandl_forecast
 
 
-def get_returns_for_optimisation(instrument_code, capital=1000000, risk_target=0.16,
-                                 target_abs_forecast=10):
-    price, vol = raw_price_and_vol(instrument_code)  # price 也没有问题
-    daily_returns = get_daily_returns(instrument_code)
-    daily_returns_volatility = mixed_vol_calc(daily_returns, slow_vol_years=10)  # daily returns vol 没有问题
-    start_date = pd.to_datetime(daily_returns_volatility.index[0])
-    end_date = datetime.now()
-    bdate_range = pd.bdate_range(start_date, end_date)
-
-    fx = pd.Series(1.0, index=bdate_range)  # 虽然没有任何影响，但不能删，在作者定义的类中需要用到, fx 没有问题
-
-    dict_of_pandl_by_rule = {}
-    forecast = get_forecast_as_list(instrument_code)
-    forecast_name = ['ewmac32', 'ewmac8']
-    i = 0
-    for forecast in forecast:
-        notional_position, ave_notional_position, value_per_point = (
-            pandl_for_instrument_forecast(forecast=forecast,
-                                          capital=capital,
-                                          risk_target=risk_target,
-                                          daily_returns_volatility=daily_returns_volatility,
-                                          target_abs_forecast=target_abs_forecast,
-                                          instrument_code=instrument_code))
-        pandl_calculator = pandlCalculationWithSRCosts(price,
-                                                       SR_cost=0,
-                                                       positions=notional_position,
-                                                       fx=fx,
-                                                       daily_returns_volatility=daily_returns_volatility,
-                                                       average_position=ave_notional_position,
-                                                       capital=capital,
-                                                       value_per_point=value_per_point,
-                                                       delayfill=True)
-        account_curve = accountCurve(pandl_calculator)
-        dict_of_pandl_by_rule[forecast_name[i]] = account_curve
-        i += 1
-
-    dict_of_pandl_by_rule = dictOfAccountCurves(dict_of_pandl_by_rule)
-
-    account_curve = accountCurveGroup(dict_of_pandl_by_rule, capital, weighted=False)
-
-    account_curve = getattr(account_curve, 'gross').to_frame()
-    account_curve = account_curve.resample('1B').sum()
-    account_curve[account_curve == 0.0] = np.nan
-
-    return account_curve
-
-
 def get_forecast_as_list(instrument_code):  # 需自行调整的函数
     ewmac32 = get_capped_forecast(instrument_code, 32, 128)
     ewmac8 = get_capped_forecast(instrument_code, 8, 32)
@@ -176,40 +126,7 @@ def get_forecast_as_list(instrument_code):  # 需自行调整的函数
     return forecast
 
 
-def get_net_returns():
-    gross_returns_dict = {}
-    for instrument in my_config.instruments:
-        gross_returns_dict[instrument] = get_returns_for_optimisation(instrument)
-    gross_returns_dict = dictOfReturnsForOptimisation(gross_returns_dict)
-    net_returns = gross_returns_dict.single_resampled_set_of_returns('W')
-    return net_returns
-
-
 ############################################################################################# 分割线
-
-
-def generate_fitting_dates(interval_frequency='365D'):
-    net_returns = get_net_returns()
-    start_date = net_returns.index[0]
-    end_date = net_returns.index[-1]
-    # 根据数据起始和结束日期，生成各period的开始日期，且从后朝前看
-    start_dates_per_period = list(pd.date_range(end_date, start_date, freq='-' + interval_frequency))
-    start_dates_per_period.reverse()
-    # Rolling 方法
-    periods = []
-    fit_end_list = []
-    for periods_index in range(len(start_dates_per_period))[1:-1]:
-        period_start = start_dates_per_period[periods_index]
-        period_end = start_dates_per_period[periods_index + 1]
-        fit_start = start_date
-        fit_end = start_dates_per_period[periods_index]
-        fit_end_list.append(fit_end)
-        fit_date = fitDates(fit_start, fit_end, period_start, period_end)
-        periods.append(fit_date)
-
-    periods = [fitDates(start_date, start_date, start_date, start_dates_per_period[1], no_data=True)] + periods
-
-    return listOfFittingDates(periods), fit_end_list
 
 
 def get_corr_estimator(data_for_analysis, fit_end, span=50000, min_periods=10):
@@ -458,6 +375,70 @@ def apply_buffer_for_single_period(last_position, optimal_position, top_pos, bot
         return last_position
 
 
+def get_capped_forecast(instrument_code, Lfast, Lslow, upper_cap=20):
+    # Return the capped and scaled forecast
+    scaled_forecast = (get_forecast_scalar(instrument_code, Lfast, Lslow)
+                       * ewmac_forecast(instrument_code, Lfast, Lslow))
+    capped_scaled_forecast = cap_forecast(scaled_forecast, upper_cap)
+    return capped_scaled_forecast
+
+
+def get_returns_for_optimisation(instrument_code, capital=1000000, risk_target=0.16,
+                                 target_abs_forecast=10):
+    price, vol = raw_price_and_vol(instrument_code)  # price 也没有问题
+    daily_returns = get_daily_returns(instrument_code)
+    daily_returns_volatility = mixed_vol_calc(daily_returns, slow_vol_years=10)  # daily returns vol 没有问题
+    start_date = pd.to_datetime(daily_returns_volatility.index[0])
+    end_date = datetime.now()
+    bdate_range = pd.bdate_range(start_date, end_date)
+
+    fx = pd.Series(1.0, index=bdate_range)  # 虽然没有任何影响，但不能删，在作者定义的类中需要用到, fx 没有问题
+
+    dict_of_pandl_by_rule = {}
+    forecast = get_forecast_as_list(instrument_code)
+    forecast_name = ['ewmac32', 'ewmac8']
+    i = 0
+    for forecast in forecast:
+        notional_position, ave_notional_position, value_per_point = (
+            pandl_for_instrument_forecast(forecast=forecast,
+                                          capital=capital,
+                                          risk_target=risk_target,
+                                          daily_returns_volatility=daily_returns_volatility,
+                                          target_abs_forecast=target_abs_forecast,
+                                          instrument_code=instrument_code))
+        pandl_calculator = pandlCalculationWithSRCosts(price,
+                                                       SR_cost=0,
+                                                       positions=notional_position,
+                                                       fx=fx,
+                                                       daily_returns_volatility=daily_returns_volatility,
+                                                       average_position=ave_notional_position,
+                                                       capital=capital,
+                                                       value_per_point=value_per_point,
+                                                       delayfill=True)
+        account_curve = accountCurve(pandl_calculator)
+        dict_of_pandl_by_rule[forecast_name[i]] = account_curve
+        i += 1
+
+    dict_of_pandl_by_rule = dictOfAccountCurves(dict_of_pandl_by_rule)
+
+    account_curve = accountCurveGroup(dict_of_pandl_by_rule, capital, weighted=False)
+
+    account_curve = getattr(account_curve, 'gross').to_frame()
+    account_curve = account_curve.resample('1B').sum()
+    account_curve[account_curve == 0.0] = np.nan
+
+    return account_curve
+
+
+def get_net_return():
+    gross_returns_dict = {}
+    for instrument1 in my_config.instruments:
+        gross_returns_dict[instrument1] = get_returns_for_optimisation(instrument1)
+    gross_returns_dict = dictOfReturnsForOptimisation(gross_returns_dict)
+    returns = gross_returns_dict.single_resampled_set_of_returns('W')
+    return returns
+
+
 def process_instrument_pnl(instrument):
     forecast8 = get_capped_forecast(instrument, 8, 32)
     forecast8 = forecast8.rename('ewmac8')
@@ -465,12 +446,30 @@ def process_instrument_pnl(instrument):
     forecast32 = forecast32.rename('ewmac32')
     forecast_df = pd.concat([forecast8, forecast32], axis=1)  # Forecast 没有问题
 
-    net_returns = get_net_returns()
+    returns = get_net_return()
 
-    fit_period, fit_end_list = generate_fitting_dates()
+    start_date = returns.index[0]
+    end_date = returns.index[-1]
+    # 根据数据起始和结束日期，生成各period的开始日期，且从后朝前看
+    start_dates_per_period = list(pd.date_range(end_date, start_date, freq='-' + '365D'))
+    start_dates_per_period.reverse()
+    # Rolling 方法
+    periods = []
+    end_list = []
+    for periods_index in range(len(start_dates_per_period))[1:-1]:
+        period_start = start_dates_per_period[periods_index]
+        period_end = start_dates_per_period[periods_index + 1]
+        fit_start = start_date
+        fit_end = start_dates_per_period[periods_index]
+        end_list.append(fit_end)
+        fit_date = fitDates(fit_start, fit_end, period_start, period_end)
+        periods.append(fit_date)
+    periods = [fitDates(start_date, start_date, start_date, start_dates_per_period[1], no_data=True)] + periods
+    fit_period = listOfFittingDates(periods)
+    fit_end_list = end_list
     weight_list = []
     for i in range(len(fit_period) - 1):
-        weight = get_weight(net_returns, i, fit_end_list)
+        weight = get_weight(returns, i, fit_end_list)
         weight_list.append(weight)
     weights1 = pd.Series(weight_list)
     weights1.index = fit_end_list

@@ -1,8 +1,10 @@
 import numpy as np
 import pandas as pd
 
-from refactory.submission import get_capped_forecast, my_config, calculate_avg_position, get_net_returns, \
-    get_div_mult, generate_fitting_dates, get_weight, replace_nan
+from refactory.submission import get_capped_forecast, my_config, calculate_avg_position, get_div_mult, get_weight, \
+    replace_nan, get_returns_for_optimisation
+from sysquant.fitting_dates import fitDates, listOfFittingDates
+from sysquant.returns import dictOfReturnsForOptimisation
 
 
 def get_turnover_for_forecast(instrument_code, Lfast, Lslow):
@@ -104,3 +106,36 @@ def get_smoothed_weights(instrument_code, data_for_analysis):
     df = pd.DataFrame(weights.tolist())
     smoothed_weights = df.ewm(span=125).mean()
     return smoothed_weights
+
+
+def generate_fitting_dates(interval_frequency='365D'):
+    net_returns = get_net_returns()
+    start_date = net_returns.index[0]
+    end_date = net_returns.index[-1]
+    # 根据数据起始和结束日期，生成各period的开始日期，且从后朝前看
+    start_dates_per_period = list(pd.date_range(end_date, start_date, freq='-' + interval_frequency))
+    start_dates_per_period.reverse()
+    # Rolling 方法
+    periods = []
+    fit_end_list = []
+    for periods_index in range(len(start_dates_per_period))[1:-1]:
+        period_start = start_dates_per_period[periods_index]
+        period_end = start_dates_per_period[periods_index + 1]
+        fit_start = start_date
+        fit_end = start_dates_per_period[periods_index]
+        fit_end_list.append(fit_end)
+        fit_date = fitDates(fit_start, fit_end, period_start, period_end)
+        periods.append(fit_date)
+
+    periods = [fitDates(start_date, start_date, start_date, start_dates_per_period[1], no_data=True)] + periods
+
+    return listOfFittingDates(periods), fit_end_list
+
+
+def get_net_returns():
+    gross_returns_dict = {}
+    for instrument in my_config.instruments:
+        gross_returns_dict[instrument] = get_returns_for_optimisation(instrument)
+    gross_returns_dict = dictOfReturnsForOptimisation(gross_returns_dict)
+    net_returns = gross_returns_dict.single_resampled_set_of_returns('W')
+    return net_returns

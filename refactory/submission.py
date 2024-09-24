@@ -13,16 +13,6 @@ my_config = Config()
 my_config.instruments = ["CORN", "SOFR", "SP500_micro", 'US10']
 
 
-def calculate_forecasts(instrument):
-    forecast8 = get_capped_forecast(instrument, 8, 32)
-    forecast8 = forecast8.rename('ewmac8')
-    forecast32 = get_capped_forecast(instrument, 32, 128)
-    forecast32 = forecast32.rename('ewmac32')
-    forecast_df = pd.concat([forecast8, forecast32], axis=1)
-    forecast_df.index = pd.to_datetime(forecast_df.index)
-    return forecast_df
-
-
 def get_returns_for_optimisation(instrument_code, capital=1000000, risk_target=0.16,
                                  target_abs_forecast=10):
     forecast_df = calculate_forecasts(instrument_code)
@@ -60,6 +50,16 @@ def get_returns_for_optimisation(instrument_code, capital=1000000, risk_target=0
     return daily_curve
 
 
+def calculate_forecasts(instrument):
+    forecast8 = get_capped_forecast(instrument, 8, 32)
+    forecast8 = forecast8.rename('ewmac8')
+    forecast32 = get_capped_forecast(instrument, 32, 128)
+    forecast32 = forecast32.rename('ewmac32')
+    forecast_df = pd.concat([forecast8, forecast32], axis=1)
+    forecast_df.index = pd.to_datetime(forecast_df.index)
+    return forecast_df
+
+
 def get_capped_forecast(instrument_code, Lfast, Lslow, upper_cap=20):
     scalar = get_forecast_scalar(instrument_code, Lfast, Lslow)
     raw_forecast = ewmac_forecast(instrument_code, Lfast, Lslow)
@@ -67,16 +67,6 @@ def get_capped_forecast(instrument_code, Lfast, Lslow, upper_cap=20):
     lower_cap = -upper_cap
     capped_forecast = scaled_forecast.clip(lower=lower_cap, upper=upper_cap)
     return capped_forecast
-
-
-# 策略
-def ewmac_forecast(instrument_code, Lfast, Lslow, min_periods=1):
-    price = get_daily_price(instrument_code)
-    vol = get_volatily(price)
-    raw_ewm = ewmac(price, Lfast, Lslow, min_periods)
-    raw_forecast = raw_ewm / vol.ffill()
-    raw_forecast[raw_forecast == 0] = np.nan
-    return raw_forecast
 
 
 def get_forecast_scalar(instrument_code, Lfast, Lslow, window=250000,
@@ -90,6 +80,16 @@ def get_forecast_scalar(instrument_code, Lfast, Lslow, window=250000,
     if backfill:
         scaling_factor = scaling_factor.bfill()
     return scaling_factor
+
+
+# 策略
+def ewmac_forecast(instrument_code, Lfast, Lslow, min_periods=1):
+    price = get_daily_price(instrument_code)
+    vol = get_volatily(price)
+    raw_ewm = ewmac(price, Lfast, Lslow, min_periods)
+    raw_forecast = raw_ewm / vol.ffill()
+    raw_forecast[raw_forecast == 0] = np.nan
+    return raw_forecast
 
 
 def get_div_mult(instrument_code, weights):

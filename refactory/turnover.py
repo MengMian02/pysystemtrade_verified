@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 from refactory.submission import get_capped_forecast, my_config, calculate_avg_position, get_div_mult, get_weight, \
-    replace_nan, get_returns_for_optimisation
+    get_returns_for_optimisation
 from sysquant.fitting_dates import fitDates, listOfFittingDates
 from sysquant.returns import dictOfReturnsForOptimisation
 
@@ -139,3 +139,7 @@ def get_net_returns():
     gross_returns_dict = dictOfReturnsForOptimisation(gross_returns_dict)
     net_returns = gross_returns_dict.single_resampled_set_of_returns('W')
     return net_returns
+
+
+def replace_nan(x):
+    return [0.5, 0.5] if isinstance(x, float) else x

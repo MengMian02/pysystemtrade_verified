@@ -5,9 +5,12 @@ from scipy.optimize import minimize
 
 from refactory.data_source import get_daily_price, get_raw_carry_data, get_block_move_price
 from refactory.utils import get_volatily, ewmac, calculate_mixed_volatility, get_corr_estimator_for_instrument_weight, \
-    get_stdev_estimator_for_instrument_weight
+    get_stdev_estimator_for_instrument_weight, get_stdev_estimator, get_mean_estimator, get_corr_estimator
 from sysdata.config.configdata import Config
 from sysquant.fitting_dates import fitDates, listOfFittingDates
+
+my_config = Config()
+my_config.instruments = ["CORN", "SOFR", "SP500_micro", 'US10']
 
 
 # 策略
@@ -36,45 +39,6 @@ def get_forecast_scalar(instrument_code, Lfast, Lslow, window=250000,
 ############################################################################################# 分割线
 
 
-my_config = Config()
-my_config.instruments = ["CORN", "SOFR", "SP500_micro", 'US10']
-
-
-############################################################################################# 分割线
-
-
-def get_corr_estimator(data_for_analysis, fit_end, span=50000, min_periods=10):
-    raw_corr = data_for_analysis.ewm(span=span, min_periods=min_periods, ignore_na=True).corr(
-        pairwise=True)  # span 和min_periods 都是config 里面的4倍，因为4个instruments
-    columns = data_for_analysis.columns
-    size_of_matrix = len(columns)
-    corr_matrix_values = (raw_corr[raw_corr.index.get_level_values(0) < fit_end].tail(
-        size_of_matrix).values)  # 截取fit_period之前的数据
-    return corr_matrix_values
-
-
-def get_mean_estimator(data_for_analysis, fit_end, span=50000, min_periods=10):
-    mean = data_for_analysis.ewm(span=span, min_periods=min_periods).mean()  # 逻辑还是config 的4倍
-    last_index = data_for_analysis.index[data_for_analysis.index < fit_end].size - 1
-    mean = mean.iloc[last_index]
-    annualised_mean_estimate = {}
-    for rule_name, mean_value in mean.items():
-        annualised_mean_estimate[rule_name] = mean_value * 365.25 / 7.0
-    mean_list = [value for value in annualised_mean_estimate.values()]
-    return mean_list
-
-
-def get_stdev_estimator(data_for_analysis, fit_end, span=50000, min_periods=10):
-    stdev = data_for_analysis.ewm(span=span, min_periods=min_periods).std()
-    last_index = data_for_analysis.index[data_for_analysis.index < fit_end].size - 1
-    stdev = stdev.iloc[last_index]
-    annualised_stdev_estimate = {}
-    for rule_name, std_value in stdev.items():
-        annualised_stdev_estimate[rule_name] = std_value * ((365.25 / 7.0) ** 0.5)
-    stdev_list = [value for value in annualised_stdev_estimate.values()]
-    return stdev_list
-
-
 def addem(weights):
     return 1.0 - sum(weights)
 
@@ -86,67 +50,22 @@ def neg_SR(weights, sigma, mus):
     return sr
 
 
-def get_weight(data_for_analysis, date_period, fit_end_list, strategy_number=2):
-    fit_end = fit_end_list[date_period]
-
-    span = len(my_config.instruments) * 50000
-    min_periods_corr = len(my_config.instruments) * 10
-    min_periods = len(my_config.instruments) * 5
-    stdev_list = get_stdev_estimator(data_for_analysis, fit_end, span, min_periods)
-    ave_stdev = np.nanmean(stdev_list)
-    norm_stdev = [ave_stdev] * strategy_number
-
-    norm_factor = [stdev / ave_stdev for stdev in stdev_list]
-    mean_list = get_mean_estimator(data_for_analysis, fit_end, span, min_periods)  # mean list 没问题
-    norm_mean = [a / b for a, b in zip(mean_list, norm_factor)]
-
-    corr_matrix = get_corr_estimator(data_for_analysis, fit_end, span, min_periods_corr)  # corr matrix 没问题
-
-    sigma = np.diag(norm_stdev).dot(corr_matrix).dot(np.diag(norm_stdev))  # sigma 没问题
-    mus = np.array(norm_mean, ndmin=2).transpose()  # mus 没问题
-    start_weights = np.array([1 / strategy_number] * strategy_number)
-    bounds = [(0.0, 1.0)] * strategy_number
-
-    cdict = [{"type": "eq", "fun": addem}]
-    ans = minimize(neg_SR, start_weights, (sigma, mus), method='SLSQP', constraints=cdict, bounds=bounds, tol=0.00001)
-    weight = ans['x']
-    return weight
-
-
-def replace_nan(x):
-    if isinstance(x, float):
-        return [0.5, 0.5]
-    else:
-        return x
-
-
 ############################################################################################# 分割线
-
-def get_concat_forecast(instrument, end='2023-09-03'):
-    forecast32 = get_capped_forecast(instrument, 32, 128)
-    forecast32.name = 'ewmac32'
-    forecast8 = get_capped_forecast(instrument, 8, 32)
-    forecast8.name = 'ewmac8'
-    forecast = pd.concat([forecast32, forecast8], axis=1)
-    forecast.index = pd.to_datetime(forecast.index)
-    weekly_index = pd.date_range(start=forecast.index[0], end=end, freq='W')  # 结束日期需要自行根据品种设定
-    forecast = forecast.reindex(weekly_index, method='ffill')
-    return forecast
-
-
-def corr_over_time(data_for_analysis, fit_end):
-    raw_corr = data_for_analysis.ewm(span=250, min_periods=20, ignore_na=True).corr(pairwise=True)
-    columns = data_for_analysis.columns
-    size_of_matrix = len(columns)
-    corr_matrix_values = (raw_corr[raw_corr.index.get_level_values(0) < fit_end].tail(
-        size_of_matrix).values)
-    return corr_matrix_values
 
 
 def get_div_mult(instrument_code, weights):
-    forecast1 = get_concat_forecast(instrument_code)
-    start_date = forecast1.index[0]
-    end_date = forecast1.index[-1]
+    forecast_ = get_capped_forecast(instrument_code, 32, 128)
+    forecast_.name = 'ewmac32'
+    forecast8 = get_capped_forecast(instrument_code, 8, 32)
+    forecast8.name = 'ewmac8'
+
+    forecast = pd.concat([forecast_, forecast8], axis=1)
+    forecast.index = pd.to_datetime(forecast.index)
+    weekly_index = pd.date_range(start=forecast.index[0], end='2023-09-03', freq='W')  # 结束日期需要自行根据品种设定
+    forecast = forecast.reindex(weekly_index, method='ffill')
+
+    start_date = forecast.index[0]
+    end_date = forecast.index[-1]
 
     # 根据数据起始和结束日期，生成各period的开始日期，且从后朝前看
     start_dates_per_period = list(pd.date_range(end_date, start_date, freq='-' + '365D'))
@@ -163,16 +82,18 @@ def get_div_mult(instrument_code, weights):
         fit_date = fitDates(fit_start, end, period_start, period_end)
         periods.append(fit_date)
     forecast32 = get_capped_forecast(instrument_code, 32, 128)
-    forecast = get_concat_forecast(instrument_code)
 
     weights.index = forecast32.index
     weights = weights.rename(columns={0: 'ewmac32', 1: 'ewmac8'})
     corr_list = []
     for i in range(len(fit_end_list)):
         fit_end = fit_end_list[i]
-        corr_matrix = corr_over_time(forecast, fit_end)
-        corr_list.append(corr_matrix)
-
+        raw_corr = forecast.ewm(span=250, min_periods=20, ignore_na=True).corr(pairwise=True)
+        columns = forecast.columns
+        size_of_matrix = len(columns)
+        corr_matrix_values = (raw_corr[raw_corr.index.get_level_values(0) < fit_end].tail(
+            size_of_matrix).values)
+        corr_list.append(corr_matrix_values)
 
     div_mult = []
     for corrmatrix, start_of_period in zip(corr_list, fit_end_list):
@@ -291,6 +212,8 @@ def process_instrument_pnl(instrument):
     weights1 = pd.Series(weight_list)
     weights1.index = fit_end_list
     weights1 = weights1.reindex(forecast_df.index, method='ffill')
+
+    replace_nan = lambda x: [0.5, 0.5] if isinstance(x, float) else x
     weights1 = weights1.apply(replace_nan)
     weight_df = pd.DataFrame(weights1.tolist())
 
@@ -328,13 +251,40 @@ def main(my_config):
     return
 
 
+def get_weight(data_for_analysis, date_period, fit_end_list, strategy_number=2):
+    fit_end = fit_end_list[date_period]
+
+    span = len(my_config.instruments) * 50000
+    min_periods_corr = len(my_config.instruments) * 10
+    min_periods = len(my_config.instruments) * 5
+    stdev_list = get_stdev_estimator(data_for_analysis, fit_end, span, min_periods)
+    ave_stdev = np.nanmean(stdev_list)
+    norm_stdev = [ave_stdev] * strategy_number
+
+    norm_factor = [stdev / ave_stdev for stdev in stdev_list]
+    mean_list = get_mean_estimator(data_for_analysis, fit_end, span, min_periods)  # mean list 没问题
+    norm_mean = [a / b for a, b in zip(mean_list, norm_factor)]
+
+    corr_matrix = get_corr_estimator(data_for_analysis, fit_end, span, min_periods_corr)  # corr matrix 没问题
+
+    sigma = np.diag(norm_stdev).dot(corr_matrix).dot(np.diag(norm_stdev))  # sigma 没问题
+    mus = np.array(norm_mean, ndmin=2).transpose()  # mus 没问题
+    start_weights = np.array([1 / strategy_number] * strategy_number)
+    bounds = [(0.0, 1.0)] * strategy_number
+
+    cdict = [{"type": "eq", "fun": addem}]
+    ans = minimize(neg_SR, start_weights, (sigma, mus), method='SLSQP', constraints=cdict, bounds=bounds, tol=0.00001)
+    weight = ans['x']
+    return weight
+
+
 def get_capped_forecast(instrument_code, Lfast, Lslow, upper_cap=20):
-    # Return the capped and scaled forecast
-    scaled_forecast = (get_forecast_scalar(instrument_code, Lfast, Lslow)
-                       * ewmac_forecast(instrument_code, Lfast, Lslow))
+    scalar = get_forecast_scalar(instrument_code, Lfast, Lslow)
+    raw_forecast = ewmac_forecast(instrument_code, Lfast, Lslow)
+    scaled_forecast = scalar * raw_forecast
     lower_cap = -upper_cap
-    forecast = scaled_forecast.clip(lower=lower_cap, upper=upper_cap)
-    return forecast
+    capped_forecast = scaled_forecast.clip(lower=lower_cap, upper=upper_cap)
+    return capped_forecast
 
 
 def calculate_avg_position(instrument_code, capital=1000000, perc_vol_target=16):

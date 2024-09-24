@@ -9,7 +9,6 @@ from sysdata.config.configdata import Config
 from sysquant.fitting_dates import fitDates, listOfFittingDates
 from sysquant.returns import dictOfReturnsForOptimisationWithCosts
 from systems.accounts.curves.account_curve import accountCurve
-from systems.accounts.curves.dict_of_account_curves import dictOfAccountCurves
 from systems.accounts.pandl_calculators.pandl_SR_cost import pandlCalculationWithSRCosts
 from systems.accounts.pandl_calculators.pandl_generic_costs import GROSS_CURVE
 
@@ -389,18 +388,19 @@ def _item_(curve):
 
 def get_returns_for_optimisation(instrument_code, capital=1000000, risk_target=0.16,
                                  target_abs_forecast=10):
-    price, vol = raw_price_and_vol(instrument_code)  # price 也没有问题
+    price, vol = raw_price_and_vol(instrument_code)
     daily_returns = get_daily_returns(instrument_code)
-    daily_returns_volatility = mixed_vol_calc(daily_returns, slow_vol_years=10)  # daily returns vol 没有问题
+    daily_returns_volatility = mixed_vol_calc(daily_returns, slow_vol_years=10)
     start_date = pd.to_datetime(daily_returns_volatility.index[0])
     end_date = datetime.now()
     bdate_range = pd.bdate_range(start_date, end_date)
 
-    fx = pd.Series(1.0, index=bdate_range)  # 虽然没有任何影响，但不能删，在作者定义的类中需要用到, fx 没有问题
+    fx = pd.Series(1.0, index=bdate_range)
 
     dict_of_pandl_by_rule = {}
     forecast = get_forecast_as_list(instrument_code)
     forecast_name = ['ewmac32', 'ewmac8']
+
     i = 0
     for forecast in forecast:
         notional_position, ave_notional_position, value_per_point = (
@@ -423,10 +423,8 @@ def get_returns_for_optimisation(instrument_code, capital=1000000, risk_target=0
         dict_of_pandl_by_rule[forecast_name[i]] = account_curve
         i += 1
 
-    dict_of_account_curves = dictOfAccountCurves(dict_of_pandl_by_rule)
-
-    asset_columns = list(dict_of_account_curves.keys())
-    data_as_list = [_item_(dict_of_account_curves[asset_name]) for asset_name in asset_columns]
+    asset_columns = list(dict_of_pandl_by_rule.keys())
+    data_as_list = [_item_(dict_of_pandl_by_rule[asset_name]) for asset_name in asset_columns]
     curve = pd.concat(data_as_list, axis=1)
     curve.columns = asset_columns
 

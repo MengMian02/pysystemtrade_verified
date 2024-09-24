@@ -84,33 +84,25 @@ def process_factors_pnl(instrument_code, capital=1000000, risk_target=0.16, targ
     price = get_daily_price(instrument_code)
     forecast_df = calculate_forecasts(price)
     forecast_df = forecast_df / target_abs_forecast
+
     block_move_price = get_block_move_price(instrument_code)
     func_pnl = lambda forecast: calculate_factor_pnl(forecast, price, capital, block_move_price, risk_target)
     factor_pnl_df = forecast_df.apply(func_pnl, axis=0)
     factor_pnl_df[factor_pnl_df == 0.0] = np.nan
-    return factor_pnl_df
+
+    weekly_pnl_df = factor_pnl_df.resample('W').sum()
+    return weekly_pnl_df
 
 
-def get_net_return():
-    gross_returns_dict = {}
-    for instrument1 in my_config.instruments:
-        gross_returns_dict[instrument1] = process_factors_pnl(instrument1)
-
-    ret_df_list = gross_returns_dict.values()
-
-    weekly_ret = [item.resample('W').sum() for item in ret_df_list]
-
+def combine_instrument_pnl_df(weekly_ret):
     from itertools import chain
     all_indices_flattened = list(chain.from_iterable(data_item.index for data_item in weekly_ret))
     common_unique_index = sorted(set(all_indices_flattened))
     data_reindexed = [data_item.reindex(common_unique_index) for data_item in weekly_ret]
-
     for offset_value, data_item in enumerate(data_reindexed):
         data_item.index = data_item.index + pd.Timedelta("%dus" % offset_value)
-
     stacked_data = pd.concat(data_reindexed, axis=0)
     stacked_data = stacked_data.sort_index()
-
     return stacked_data
 
 
@@ -118,7 +110,9 @@ def process_instrument_pnl(instrument):
     price = get_daily_price(instrument)
     forecast_df = calculate_forecasts(price)
 
-    returns = get_net_return()
+    instruments = my_config.instruments
+    weekly_ret = [process_factors_pnl(it) for it in instruments]
+    returns = combine_instrument_pnl_df(weekly_ret)
 
     start_date = returns.index[0]
     end_date = returns.index[-1]
@@ -128,14 +122,16 @@ def process_instrument_pnl(instrument):
     # Rolling 方法
     periods = []
     end_list = []
+    fit_start = start_date
+
     for periods_index in range(len(start_dates_per_period))[1:-1]:
         period_start = start_dates_per_period[periods_index]
         period_end = start_dates_per_period[periods_index + 1]
-        fit_start = start_date
         fit_end = start_dates_per_period[periods_index]
         end_list.append(fit_end)
         fit_date = fitDates(fit_start, fit_end, period_start, period_end)
         periods.append(fit_date)
+
     periods = [fitDates(start_date, start_date, start_date, start_dates_per_period[1], no_data=True)] + periods
     fit_period = listOfFittingDates(periods)
     fit_end_list = end_list
@@ -156,6 +152,7 @@ def process_instrument_pnl(instrument):
     weights = smoothed_weights[['ewmac8', 'ewmac32']]
 
     weights.index = forecast_df.index
+
     forecast_div_multiplier = get_div_mult(instrument, weights)
     combined_forecast = (weights * forecast_df).sum(axis=1) * forecast_div_multiplier
     capped_combined_forecast = combined_forecast.clip(20, -20)

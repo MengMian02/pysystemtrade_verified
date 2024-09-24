@@ -18,41 +18,41 @@ def calculate_forecasts(instrument):
     forecast8 = forecast8.rename('ewmac8')
     forecast32 = get_capped_forecast(instrument, 32, 128)
     forecast32 = forecast32.rename('ewmac32')
-    forecast_df = pd.concat([forecast8, forecast32], axis=1)  # Forecast 没有问题
+    forecast_df = pd.concat([forecast8, forecast32], axis=1)
+    forecast_df.index = pd.to_datetime(forecast_df.index)
     return forecast_df
+
 
 def get_returns_for_optimisation(instrument_code, capital=1000000, risk_target=0.16,
                                  target_abs_forecast=10):
-
-    ewmac32 = get_capped_forecast(instrument_code, 32, 128)
-    ewmac8 = get_capped_forecast(instrument_code, 8, 32)
-    forecast1 = [ewmac32, ewmac8]
-    forecast_name = ['ewmac32', 'ewmac8']
+    forecast_df = calculate_forecasts(instrument_code)
+    forecast_names = forecast_df.columns
 
     price = get_daily_price(instrument_code)
-    daily_returns = price.diff()
-    daily_returns_volatility = calculate_mixed_volatility(daily_returns, slow_vol_years=10)
+    ret_volatility = calculate_mixed_volatility(price.diff(), slow_vol_years=10)
 
     data_as_list = []
-    for forecast in forecast1:
-        normalised_forecast = forecast / target_abs_forecast
+    for name in forecast_names:
+        forecast = forecast_df[name]
+
         daily_risk_target = risk_target / (256 ** 0.5)
         daily_cash_vol_target = daily_risk_target * capital
         block_move_price = get_block_move_price(instrument_code)
-        ave_notional_position = daily_cash_vol_target / (daily_returns_volatility * block_move_price)
+        ave_notional_position = daily_cash_vol_target / (ret_volatility * block_move_price)
+
+        normalised_forecast = forecast / target_abs_forecast
         aligned_ave = ave_notional_position.reindex(normalised_forecast.index, method='ffill')
         notional_position = aligned_ave * normalised_forecast
 
         pandl_in_points = calculate_pandl(positions=notional_position, prices=price)
         as_pd_series = pandl_in_points * block_move_price
         as_pd_series.index = pd.to_datetime(as_pd_series.index)
-        pd_series_at_frequency = as_pd_series.resample("B").sum()
-        curve = pd_series_at_frequency
+        curve = as_pd_series.resample("B").sum()
 
         data_as_list.append(curve)
 
     curve_df = pd.concat(data_as_list, axis=1)
-    curve_df.columns = forecast_name
+    curve_df.columns = forecast_names
 
     daily_curve = curve_df.resample('1B').sum()
     daily_curve[daily_curve == 0.0] = np.nan
@@ -93,18 +93,12 @@ def get_forecast_scalar(instrument_code, Lfast, Lslow, window=250000,
 
 
 def get_div_mult(instrument_code, weights):
-    forecast_ = get_capped_forecast(instrument_code, 32, 128)
-    forecast_.name = 'ewmac32'
-    forecast8 = get_capped_forecast(instrument_code, 8, 32)
-    forecast8.name = 'ewmac8'
+    forecast_df = calculate_forecasts(instrument_code)
 
-    forecast = pd.concat([forecast_, forecast8], axis=1)
-    forecast.index = pd.to_datetime(forecast.index)
-    weekly_index = pd.date_range(start=forecast.index[0], end='2023-09-03', freq='W')  # 结束日期需要自行根据品种设定
-    forecast = forecast.reindex(weekly_index, method='ffill')
-
-    start_date = forecast.index[0]
-    end_date = forecast.index[-1]
+    weekly_index = pd.date_range(start=forecast_df.index[0], end='2023-09-03', freq='W')  # 结束日期需要自行根据品种设定
+    weekly_forecast = forecast_df.reindex(weekly_index, method='ffill')
+    start_date = weekly_forecast.index[0]
+    end_date = weekly_forecast.index[-1]
 
     # 根据数据起始和结束日期，生成各period的开始日期，且从后朝前看
     start_dates_per_period = list(pd.date_range(end_date, start_date, freq='-' + '365D'))
@@ -120,15 +114,14 @@ def get_div_mult(instrument_code, weights):
         fit_end_list.append(end)
         fit_date = fitDates(fit_start, end, period_start, period_end)
         periods.append(fit_date)
-    forecast32 = get_capped_forecast(instrument_code, 32, 128)
 
-    weights.index = forecast32.index
+    weights.index = forecast_df.index
     weights = weights.rename(columns={0: 'ewmac32', 1: 'ewmac8'})
     corr_list = []
     for i in range(len(fit_end_list)):
         fit_end = fit_end_list[i]
-        raw_corr = forecast.ewm(span=250, min_periods=20, ignore_na=True).corr(pairwise=True)
-        columns = forecast.columns
+        raw_corr = weekly_forecast.ewm(span=250, min_periods=20, ignore_na=True).corr(pairwise=True)
+        columns = weekly_forecast.columns
         size_of_matrix = len(columns)
         corr_matrix_values = (raw_corr[raw_corr.index.get_level_values(0) < fit_end].tail(
             size_of_matrix).values)
@@ -231,7 +224,6 @@ def process_instrument_pnl(instrument):
     daily_pnl = calcuate_instrument_pnl(instrument, buffered_position)
 
     return daily_pnl
-
 
 
 def main(my_config):

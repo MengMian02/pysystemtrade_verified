@@ -51,19 +51,18 @@ def get_returns_for_optimisation(instrument_code, capital=1000000, risk_target=0
 
 
 def calculate_forecasts(instrument):
-    forecast8 = get_final_forecast(instrument, 8, 32)
+
+    price = get_daily_price(instrument)
+    raw_forecast = ewmac(price, 8, 32, 1)
+    forecast8 = final_forecast(raw_forecast, price, 20)
     forecast8 = forecast8.rename('ewmac8')
-    forecast32 = get_final_forecast(instrument, 32, 128)
+
+    forecast = ewmac(price, 32, 128, 1)
+    forecast32 = final_forecast(forecast, price, 20)
     forecast32 = forecast32.rename('ewmac32')
     forecast_df = pd.concat([forecast8, forecast32], axis=1)
     forecast_df.index = pd.to_datetime(forecast_df.index)
     return forecast_df
-
-
-def get_final_forecast(instrument_code, Lfast, Lslow, upper_cap=20):
-    price = get_daily_price(instrument_code)
-    raw_forecast = ewmac(price, Lfast, Lslow, 1)
-    return final_forecast(raw_forecast, price, upper_cap)
 
 
 def final_forecast(raw_forecast, price, upper_cap):

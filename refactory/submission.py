@@ -1,11 +1,10 @@
 import numpy as np
 import pandas as pd
 from copy import copy
-from scipy.optimize import minimize
 
 from refactory.data_source import get_daily_price, get_raw_carry_data, get_block_move_price
 from refactory.utils import get_volatily, ewmac, calculate_mixed_volatility, get_corr_estimator_for_instrument_weight, \
-    get_stdev_estimator_for_instrument_weight, get_stdev_estimator, get_mean_estimator
+    get_stdev_estimator_for_instrument_weight, get_mean_estimator, optimisation
 from sysdata.config.configdata import Config
 
 my_config = Config()
@@ -160,30 +159,21 @@ def process_instrument_pnl(instrument):
     return daily_pnl
 
 
-def get_weight(data_for_analysis, date_period, fit_end_list, strategy_number=2):
+def get_weight(data_for_analysis, date_period, fit_end_list, number=2):
     fit_end = fit_end_list[date_period]
 
     span = len(my_config.instruments) * 50000
     min_periods_corr = len(my_config.instruments) * 10
     min_periods = len(my_config.instruments) * 5
-    stdev_list = get_stdev_estimator(data_for_analysis, fit_end, span, min_periods)
-    ave_stdev = np.nanmean(stdev_list)
-    norm_stdev = [ave_stdev] * strategy_number
+    norm_stdev, norm_factor = get_stdev_estimator_for_instrument_weight(data_for_analysis, fit_end, span, min_periods)
 
-    norm_factor = [stdev / ave_stdev for stdev in stdev_list]
-    mean_list = get_mean_estimator(data_for_analysis, fit_end, span, min_periods)  # mean list 没问题
+    mean_list = get_mean_estimator(data_for_analysis, fit_end, span, min_periods)
     norm_mean = [a / b for a, b in zip(mean_list, norm_factor)]
     corr = get_corr_estimator_for_instrument_weight(data_for_analysis, fit_end, span,
-                                                    min_periods_corr)  # corr matrix 没问题
+                                                    min_periods_corr)
 
-    mus = np.array(norm_mean, ndmin=2).transpose()  # mus 没问题
-    sigma = np.diag(norm_stdev).dot(corr).dot(np.diag(norm_stdev))  # sigma 没问题
+    weight = optimisation(number, corr, norm_mean, norm_stdev)
 
-    start_weights = np.array([1 / strategy_number] * strategy_number)
-    bounds = [(0.0, 1.0)] * strategy_number
-    cdict = [{"type": "eq", "fun": addem}]
-    ans = minimize(neg_SR, start_weights, (sigma, mus), method='SLSQP', constraints=cdict, bounds=bounds, tol=0.00001)
-    weight = ans['x']
     return weight
 
 
@@ -191,21 +181,17 @@ def caculate_instrument_weights(pnl_df):
     daily_pnl = pnl_df.resample("1B").sum()
     daily_pnl[daily_pnl == 0.0] = np.nan
 
-    instrument_number = len(daily_pnl.columns)
+    number = len(daily_pnl.columns)
     weekly_ret = daily_pnl.resample('W').sum()  # SP500_micro 的一些数值不对，其他的都能对的上。怀疑是不是一些nan被填充了
     fit_end = weekly_ret.index[-1]
-    norm_stdev, _ = get_stdev_estimator_for_instrument_weight(weekly_ret, fit_end)
+    span = 500000
+    min_periods = 10
+
+    norm_stdev, _ = get_stdev_estimator_for_instrument_weight(weekly_ret, fit_end, span, min_periods)
     norm_mean = [0.5 * asset_stdev for asset_stdev in norm_stdev]
-    corr = get_corr_estimator_for_instrument_weight(weekly_ret, fit_end)
+    corr = get_corr_estimator_for_instrument_weight(weekly_ret, fit_end, span, min_periods)
 
-    mus = np.array(norm_mean, ndmin=2).transpose()  # mus 没问题
-    sigma = np.diag(norm_stdev).dot(corr).dot(np.diag(norm_stdev))
-
-    start_weights = np.array([1 / instrument_number] * instrument_number)
-    bounds = [(0.0, 1.0)] * instrument_number
-    cdict = [{"type": "eq", "fun": addem}]
-    ans = minimize(neg_SR, start_weights, (sigma, mus), method='SLSQP', constraints=cdict, bounds=bounds, tol=0.00001)
-    weight = ans['x']
+    weight = optimisation(number, corr, norm_mean, norm_stdev)
     return weight
 
 
@@ -334,23 +320,6 @@ def calcuate_instrument_pnl(instrument, position):
     pnl.index = pd.to_datetime(pnl.index)
     daily_pnl = pnl.resample("B").sum()
     return daily_pnl
-
-
-############################################################################################# 分割线
-
-
-def addem(weights):
-    return 1.0 - sum(weights)
-
-
-def neg_SR(weights, sigma, mus):
-    estimated_returns = np.dot(weights, mus)[0]
-    stdev = weights.dot(sigma).dot(weights.transpose()) ** 0.5
-    sr = -estimated_returns / stdev
-    return sr
-
-
-############################################################################################# 分割线
 
 
 #################################################################################################

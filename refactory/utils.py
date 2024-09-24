@@ -1,4 +1,5 @@
 import numpy as np
+from scipy.optimize import minimize
 
 
 def get_volatily(price, span=35, min_periods=10, vol_floor=True,
@@ -38,31 +39,7 @@ def calculate_mixed_volatility(daily_returns, days=35, min_periods=10, slow_vol_
     return vol
 
 
-def get_stdev_estimator(data, fit_end, span=50000, min_periods=10):
-    stdev = data.ewm(span=span, min_periods=min_periods).std()
-    last_index = data.index[data.index < fit_end].size - 1
-    stdev = stdev.iloc[last_index]
-    annualised_stdev_estimate = {}
-    for rule_name, std_value in stdev.items():
-        annualised_stdev_estimate[rule_name] = std_value * ((365.25 / 7.0) ** 0.5)
-    stdev_list = [value for value in annualised_stdev_estimate.values()]
-    return stdev_list
-
-
-def get_mean_estimator(data, fit_end, span=50000, min_periods=10):
-    mean = data.ewm(span=span, min_periods=min_periods).mean()  # 逻辑还是config 的4倍
-    last_index = data.index[data.index < fit_end].size - 1
-    mean = mean.iloc[last_index]
-    annualised_mean_estimate = {}
-    for rule_name, mean_value in mean.items():
-        annualised_mean_estimate[rule_name] = mean_value * 365.25 / 7.0
-    mean_list = [value for value in annualised_mean_estimate.values()]
-    return mean_list
-
-
-def get_stdev_estimator_for_instrument_weight(data_for_analysis, fit_end):
-    span = 50000
-    min_periods = 5
+def get_stdev_estimator_for_instrument_weight(data_for_analysis, fit_end, span=50000, min_periods=5):
     stdev = data_for_analysis.ewm(span=span, min_periods=min_periods).std()
     last_index = data_for_analysis.index[data_for_analysis.index < fit_end].size - 1
     stdev = stdev.iloc[last_index]
@@ -76,6 +53,17 @@ def get_stdev_estimator_for_instrument_weight(data_for_analysis, fit_end):
     return norm_stdev, norm_factor
 
 
+def get_mean_estimator(data, fit_end, span=50000, min_periods=10):
+    mean = data.ewm(span=span, min_periods=min_periods).mean()  # 逻辑还是config 的4倍
+    last_index = data.index[data.index < fit_end].size - 1
+    mean = mean.iloc[last_index]
+    annualised_mean_estimate = {}
+    for rule_name, mean_value in mean.items():
+        annualised_mean_estimate[rule_name] = mean_value * 365.25 / 7.0
+    mean_list = [value for value in annualised_mean_estimate.values()]
+    return mean_list
+
+
 def get_corr_estimator_for_instrument_weight(data, fit_end, span=500000, min_periods=10):
     raw_corr = data.ewm(span=span, min_periods=min_periods, ignore_na=True).corr(
         pairwise=True)  # span 和min_periods 都是config 里面的4倍，因为4个instruments
@@ -85,3 +73,23 @@ def get_corr_estimator_for_instrument_weight(data, fit_end, span=500000, min_per
         size_of_matrix).values)  # 截取fit_period之前的数据
     corr_matrix_values = [[max(0, item) for item in sublist] for sublist in corr_matrix_values]
     return corr_matrix_values
+
+
+def optimisation(number, corr, norm_mean, norm_stdev):
+    def addem(weights):
+        return 1.0 - sum(weights)
+
+    def neg_SR(weights, sigma, mus):
+        estimated_returns = np.dot(weights, mus)[0]
+        stdev = weights.dot(sigma).dot(weights.transpose()) ** 0.5
+        sr = -estimated_returns / stdev
+        return sr
+
+    mus = np.array(norm_mean, ndmin=2).transpose()  # mus 没问题
+    sigma = np.diag(norm_stdev).dot(corr).dot(np.diag(norm_stdev))
+    start_weights = np.array([1 / number] * number)
+    bounds = [(0.0, 1.0)] * number
+    cdict = [{"type": "eq", "fun": addem}]
+    ans = minimize(neg_SR, start_weights, (sigma, mus), method='SLSQP', constraints=cdict, bounds=bounds, tol=0.00001)
+    weight = ans['x']
+    return weight

@@ -105,6 +105,7 @@ def combine_instrument_pnl_df(weekly_ret):
 
 
 def calculate_forecast_weights(pnl_df, fit_end, number):
+    # number = len(pnl_df.columns)
     span = len(my_config.instruments) * 50000
     min_periods_corr = len(my_config.instruments) * 10
     min_periods = len(my_config.instruments) * 5
@@ -131,11 +132,9 @@ def process_instrument_pnl(instrument):
     start_dates_per_period.reverse()
     end_list = start_dates_per_period[1:-1]
 
-    weights1 = pd.Series([calculate_forecast_weights(returns, end, 2) for end in end_list], index=end_list)
-    weights1 = weights1.reindex(forecast_df.index, method='ffill')
-    replace_nan = lambda x: [0.5, 0.5] if isinstance(x, float) else x
-    weights1 = weights1.apply(replace_nan)
-    weight_df = pd.DataFrame(weights1.tolist())
+    weight_df = pd.DataFrame([calculate_forecast_weights(returns, end, 2) for end in end_list], index=end_list)
+    weight_df = weight_df.reindex(forecast_df.index, method='ffill')
+    weight_df = weight_df.fillna(1 / len(weight_df.columns))
 
     smoothed_weights = weight_df.ewm(span=125).mean()
     smoothed_weights.rename(columns={0: 'ewmac32', 1: 'ewmac8'}, inplace=True)

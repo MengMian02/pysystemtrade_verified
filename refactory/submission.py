@@ -53,8 +53,9 @@ def get_returns_for_optimisation(instrument_code, capital=1000000, risk_target=0
 def calculate_forecasts(instrument):
 
     price = get_daily_price(instrument)
-    raw_forecast = ewmac(price, 8, 32, 1)
-    forecast8 = final_forecast(raw_forecast, price, 20)
+
+    raw_ewmac8 = ewmac(price, 8, 32, 1)
+    forecast8 = final_forecast(raw_ewmac8, price, 20)
     forecast8 = forecast8.rename('ewmac8')
 
     forecast = ewmac(price, 32, 128, 1)

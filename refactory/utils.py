@@ -12,7 +12,7 @@ def get_volatily(price, span=35, min_periods=10, vol_floor=True,
         vol_min.iloc[0] = 0.0
         vol_min.ffill(inplace=True)
         vol = np.maximum(vol, vol_min)
-    return vol
+    return vol.ffill()
 
 
 def ewmac(price, Lfast, Lslow, min_periods=1):

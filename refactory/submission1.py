@@ -13,29 +13,64 @@ my_config = Config()
 my_config.instruments = ["CORN", "SOFR", "SP500_micro", 'US10']
 
 
+def calculate_forecasts(price):
+    raw_ewmac8 = ewmac(price, 8, 32, 1)
+    ewmac8 = final_forecast('ewmac8', raw_ewmac8, price, 20)
+    raw_ewmac32 = ewmac(price, 32, 128, 1)
+    ewmac32 = final_forecast('ewmac32', raw_ewmac32, price, 20)
+    forecast_df = pd.concat([ewmac8, ewmac32], axis=1)
+    forecast_df.index = pd.to_datetime(forecast_df.index)
+    return forecast_df
+
+
+def final_forecast(name, raw_forecast, price, upper_cap=20):
+    raw_forecast.rename(name, inplace=True)
+    raw_forecast[raw_forecast == 0] = np.nan
+
+    # TODO:为什么有的用价格波动率，有的用收益率波动率？
+    vol = get_volatily(price)
+    adjust_forecast = raw_forecast / vol
+
+    scalar = get_forecast_scalar(adjust_forecast)
+    scaled_forecast = scalar * adjust_forecast
+
+    lower_cap = -upper_cap
+    capped_forecast = scaled_forecast.clip(lower=lower_cap, upper=upper_cap)
+
+    return capped_forecast
+
+
+def calculate_pnl(positions: pd.Series, prices: pd.Series):
+    pos_series = positions.groupby(positions.index).last()
+    both_series = pd.concat([pos_series, prices], axis=1)
+    both_series.columns = ["positions", "prices"]
+    both_series = both_series.ffill()
+    price_returns = both_series.prices.diff()
+    returns = both_series.positions.shift(1) * price_returns
+    returns[returns.isna()] = 0.0
+    return returns
+
+
 def get_returns_for_optimisation(instrument_code, capital=1000000, risk_target=0.16,
                                  target_abs_forecast=10):
-    forecast_df = calculate_forecasts(instrument_code)
-    forecast_names = forecast_df.columns
-
     price = get_daily_price(instrument_code)
-    ret_volatility = calculate_mixed_volatility(price.diff(), slow_vol_years=10)
+    forecast_df = calculate_forecasts(price)
+
+    block_move_price = get_block_move_price(instrument_code)
+
+    position_target = get_position_target(price, block_move_price, capital, risk_target)
 
     data_as_list = []
+    forecast_names = forecast_df.columns
     for name in forecast_names:
         forecast = forecast_df[name]
 
-        daily_risk_target = risk_target / (256 ** 0.5)
-        daily_cash_vol_target = daily_risk_target * capital
-        block_move_price = get_block_move_price(instrument_code)
-        ave_notional_position = daily_cash_vol_target / (ret_volatility * block_move_price)
-
         normalised_forecast = forecast / target_abs_forecast
-        aligned_ave = ave_notional_position.reindex(normalised_forecast.index, method='ffill')
-        notional_position = aligned_ave * normalised_forecast
+        aligned_ave = position_target.reindex(normalised_forecast.index, method='ffill')
+        position = aligned_ave * normalised_forecast
 
-        pandl_in_points = calculate_pandl(positions=notional_position, prices=price)
-        as_pd_series = pandl_in_points * block_move_price
+        pnl_in_point = calculate_pnl(positions=position, prices=price)
+        as_pd_series = pnl_in_point * block_move_price
         as_pd_series.index = pd.to_datetime(as_pd_series.index)
         curve = as_pd_series.resample("B").sum()
 
@@ -50,35 +85,12 @@ def get_returns_for_optimisation(instrument_code, capital=1000000, risk_target=0
     return daily_curve
 
 
-def calculate_forecasts(instrument):
-    forecast8 = get_final_forecast(instrument, 8, 32)
-    forecast8 = forecast8.rename('ewmac8')
-    forecast32 = get_final_forecast(instrument, 32, 128)
-    forecast32 = forecast32.rename('ewmac32')
-    forecast_df = pd.concat([forecast8, forecast32], axis=1)
-    forecast_df.index = pd.to_datetime(forecast_df.index)
-    return forecast_df
-
-
-def get_final_forecast(instrument_code, Lfast, Lslow, upper_cap=20):
-    price = get_daily_price(instrument_code)
-    raw_forecast = ewmac(price, Lfast, Lslow, 1)
-    return final_forecast(raw_forecast, price, upper_cap)
-
-
-def final_forecast(raw_forecast, price, upper_cap):
-    raw_forecast[raw_forecast == 0] = np.nan
-
-    vol = get_volatily(price)
-    adjust_forecast = raw_forecast / vol
-
-    scalar = get_forecast_scalar(adjust_forecast)
-    scaled_forecast = scalar * adjust_forecast
-
-    lower_cap = -upper_cap
-    capped_forecast = scaled_forecast.clip(lower=lower_cap, upper=upper_cap)
-
-    return capped_forecast
+def get_position_target(price, block_move_price, capital=1000000, risk_target=0.16):
+    ret_volatility = calculate_mixed_volatility(price.diff(), slow_vol_years=10)
+    daily_risk_target = risk_target / (256 ** 0.5)
+    daily_cash_vol_target = daily_risk_target * capital
+    position_target = daily_cash_vol_target / (ret_volatility * block_move_price)
+    return position_target
 
 
 def get_forecast_scalar(raw_forecast, window=250000, min_period=500, target_abs_forecast=10, backfill=True):
@@ -92,7 +104,8 @@ def get_forecast_scalar(raw_forecast, window=250000, min_period=500, target_abs_
 
 
 def get_div_mult(instrument_code, weights):
-    forecast_df = calculate_forecasts(instrument_code)
+    price = get_daily_price(instrument_code)
+    forecast_df = calculate_forecasts(price)
 
     weekly_index = pd.date_range(start=forecast_df.index[0], end='2023-09-03', freq='W')  # 结束日期需要自行根据品种设定
     weekly_forecast = forecast_df.reindex(weekly_index, method='ffill')
@@ -169,7 +182,8 @@ def get_net_return():
 
 
 def process_instrument_pnl(instrument):
-    forecast_df = calculate_forecasts(instrument)
+    price = get_daily_price(instrument)
+    forecast_df = calculate_forecasts(price)
 
     returns = get_net_return()
 
@@ -321,7 +335,7 @@ def calcuate_instrument_pnl(instrument, position):
     price = get_daily_price(instrument)
     block_move_price = get_block_move_price(instrument)
     fx = pd.Series(1.0, index=price.index)
-    pnl_in_points = calculate_pandl(positions=position, prices=price)
+    pnl_in_points = calculate_pnl(positions=position, prices=price)
     pnl_in_ccy = pnl_in_points * block_move_price
     fx_aligned = fx.reindex(pnl_in_ccy.index, method="ffill")
     pnl = pnl_in_ccy * fx_aligned
@@ -365,17 +379,6 @@ def neg_SR(weights, sigma, mus):
 
 
 ############################################################################################# 分割线
-
-
-def calculate_pandl(positions: pd.Series, prices: pd.Series):
-    pos_series = positions.groupby(positions.index).last()
-    both_series = pd.concat([pos_series, prices], axis=1)
-    both_series.columns = ["positions", "prices"]
-    both_series = both_series.ffill()
-    price_returns = both_series.prices.diff()
-    returns = both_series.positions.shift(1) * price_returns
-    returns[returns.isna()] = 0.0
-    return returns
 
 
 #################################################################################################

@@ -120,23 +120,23 @@ def process_instrument_pnl(instrument):
     start_dates_per_period = list(pd.date_range(end_date, start_date, freq='-' + '365D'))
     start_dates_per_period.reverse()
     # Rolling 方法
-    periods = []
+    # periods = []
     end_list = []
-    fit_start = start_date
+    # fit_start = start_date
 
     for periods_index in range(len(start_dates_per_period))[1:-1]:
-        period_start = start_dates_per_period[periods_index]
-        period_end = start_dates_per_period[periods_index + 1]
+        # period_start = start_dates_per_period[periods_index]
+        # period_end = start_dates_per_period[periods_index + 1]
         fit_end = start_dates_per_period[periods_index]
         end_list.append(fit_end)
-        fit_date = fitDates(fit_start, fit_end, period_start, period_end)
-        periods.append(fit_date)
+        # fit_date = fitDates(fit_start, fit_end, period_start, period_end)
+        # periods.append(fit_date)
 
-    periods = [fitDates(start_date, start_date, start_date, start_dates_per_period[1], no_data=True)] + periods
-    fit_period = listOfFittingDates(periods)
+    # periods = [fitDates(start_date, start_date, start_date, start_dates_per_period[1], no_data=True)] + periods
+    # fit_period = listOfFittingDates(periods)
     fit_end_list = end_list
     weight_list = []
-    for i in range(len(fit_period) - 1):
+    for i in range(len(fit_end_list)):
         weight = get_weight(returns, i, fit_end_list)
         weight_list.append(weight)
     weights1 = pd.Series(weight_list)
@@ -169,6 +169,33 @@ def process_instrument_pnl(instrument):
     return daily_pnl
 
 
+def get_weight(data_for_analysis, date_period, fit_end_list, strategy_number=2):
+    fit_end = fit_end_list[date_period]
+
+    span = len(my_config.instruments) * 50000
+    min_periods_corr = len(my_config.instruments) * 10
+    min_periods = len(my_config.instruments) * 5
+    stdev_list = get_stdev_estimator(data_for_analysis, fit_end, span, min_periods)
+    ave_stdev = np.nanmean(stdev_list)
+    norm_stdev = [ave_stdev] * strategy_number
+
+    norm_factor = [stdev / ave_stdev for stdev in stdev_list]
+    mean_list = get_mean_estimator(data_for_analysis, fit_end, span, min_periods)  # mean list 没问题
+    norm_mean = [a / b for a, b in zip(mean_list, norm_factor)]
+
+    corr_matrix = get_corr_estimator(data_for_analysis, fit_end, span, min_periods_corr)  # corr matrix 没问题
+
+    sigma = np.diag(norm_stdev).dot(corr_matrix).dot(np.diag(norm_stdev))  # sigma 没问题
+    mus = np.array(norm_mean, ndmin=2).transpose()  # mus 没问题
+    start_weights = np.array([1 / strategy_number] * strategy_number)
+    bounds = [(0.0, 1.0)] * strategy_number
+
+    cdict = [{"type": "eq", "fun": addem}]
+    ans = minimize(neg_SR, start_weights, (sigma, mus), method='SLSQP', constraints=cdict, bounds=bounds, tol=0.00001)
+    weight = ans['x']
+    return weight
+
+
 def main(my_config):
     instruments = my_config.instruments
 
@@ -198,16 +225,16 @@ def get_div_mult(instrument_code, weights):
     start_dates_per_period = list(pd.date_range(end_date, start_date, freq='-' + '365D'))
     start_dates_per_period.reverse()
     # Rolling 方法
-    periods = []
+    # periods = []
     fit_end_list = []
     for periods_index in range(len(start_dates_per_period))[1:-1]:
-        period_start = start_dates_per_period[periods_index]
-        period_end = start_dates_per_period[periods_index + 1]
-        fit_start = start_date
+        # period_start = start_dates_per_period[periods_index]
+        # period_end = start_dates_per_period[periods_index + 1]
+        # fit_start = start_date
         end = start_dates_per_period[periods_index]  # 之前的fit end 是 period end, 所以就造成了fit 和 use 的一部分重叠
         fit_end_list.append(end)
-        fit_date = fitDates(fit_start, end, period_start, period_end)
-        periods.append(fit_date)
+        # fit_date = fitDates(fit_start, end, period_start, period_end)
+        # periods.append(fit_date)
 
     weights.index = forecast_df.index
     weights = weights.rename(columns={0: 'ewmac32', 1: 'ewmac8'})
@@ -235,33 +262,6 @@ def get_div_mult(instrument_code, weights):
     div_mult_df_smoothed = div_mult_df_daily.ewm(span=125).mean()
 
     return div_mult_df_smoothed
-
-
-def get_weight(data_for_analysis, date_period, fit_end_list, strategy_number=2):
-    fit_end = fit_end_list[date_period]
-
-    span = len(my_config.instruments) * 50000
-    min_periods_corr = len(my_config.instruments) * 10
-    min_periods = len(my_config.instruments) * 5
-    stdev_list = get_stdev_estimator(data_for_analysis, fit_end, span, min_periods)
-    ave_stdev = np.nanmean(stdev_list)
-    norm_stdev = [ave_stdev] * strategy_number
-
-    norm_factor = [stdev / ave_stdev for stdev in stdev_list]
-    mean_list = get_mean_estimator(data_for_analysis, fit_end, span, min_periods)  # mean list 没问题
-    norm_mean = [a / b for a, b in zip(mean_list, norm_factor)]
-
-    corr_matrix = get_corr_estimator(data_for_analysis, fit_end, span, min_periods_corr)  # corr matrix 没问题
-
-    sigma = np.diag(norm_stdev).dot(corr_matrix).dot(np.diag(norm_stdev))  # sigma 没问题
-    mus = np.array(norm_mean, ndmin=2).transpose()  # mus 没问题
-    start_weights = np.array([1 / strategy_number] * strategy_number)
-    bounds = [(0.0, 1.0)] * strategy_number
-
-    cdict = [{"type": "eq", "fun": addem}]
-    ans = minimize(neg_SR, start_weights, (sigma, mus), method='SLSQP', constraints=cdict, bounds=bounds, tol=0.00001)
-    weight = ans['x']
-    return weight
 
 
 def calculate_avg_position(instrument_code, capital=1000000, perc_vol_target=16):

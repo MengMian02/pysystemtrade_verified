@@ -38,35 +38,6 @@ def calculate_mixed_volatility(daily_returns, days=35, min_periods=10, slow_vol_
     return vol
 
 
-def get_corr_estimator_for_instrument_weight(data, fit_end):
-    span = 500000
-    min_periods = 10
-    raw_corr = data.ewm(span=span, min_periods=min_periods, ignore_na=True).corr(
-        pairwise=True)  # span 和min_periods 都是config 里面的4倍，因为4个instruments
-    columns = data.columns
-    size_of_matrix = len(columns)
-    corr_matrix_values = (raw_corr[raw_corr.index.get_level_values(0) < fit_end].tail(
-        size_of_matrix).values)  # 截取fit_period之前的数据
-    corr_matrix_values = [[max(0, item) for item in sublist] for sublist in corr_matrix_values]
-    return corr_matrix_values
-
-
-def get_stdev_estimator_for_instrument_weight(data_for_analysis, fit_end):
-    span = 50000
-    min_periods = 5
-    stdev = data_for_analysis.ewm(span=span, min_periods=min_periods).std()
-    last_index = data_for_analysis.index[data_for_analysis.index < fit_end].size - 1
-    stdev = stdev.iloc[last_index]
-    annualised_stdev_estimate = {}
-    for rule_name, std_value in stdev.items():
-        annualised_stdev_estimate[rule_name] = std_value * ((365.25 / 7.0) ** 0.5)
-    stdev_list = [value for value in annualised_stdev_estimate.values()]
-    ave_stdev = np.nanmean(stdev_list)
-    norm_stdev = [ave_stdev] * len(stdev_list)
-    norm_factor = [stdev / ave_stdev for stdev in stdev_list]
-    return norm_stdev, norm_factor
-
-
 def get_stdev_estimator(data, fit_end, span=50000, min_periods=10):
     stdev = data.ewm(span=span, min_periods=min_periods).std()
     last_index = data.index[data.index < fit_end].size - 1
@@ -89,11 +60,28 @@ def get_mean_estimator(data, fit_end, span=50000, min_periods=10):
     return mean_list
 
 
-def get_corr_estimator(data_for_analysis, fit_end, span=50000, min_periods=10):
-    raw_corr = data_for_analysis.ewm(span=span, min_periods=min_periods, ignore_na=True).corr(
+def get_stdev_estimator_for_instrument_weight(data_for_analysis, fit_end):
+    span = 50000
+    min_periods = 5
+    stdev = data_for_analysis.ewm(span=span, min_periods=min_periods).std()
+    last_index = data_for_analysis.index[data_for_analysis.index < fit_end].size - 1
+    stdev = stdev.iloc[last_index]
+    annualised_stdev_estimate = {}
+    for rule_name, std_value in stdev.items():
+        annualised_stdev_estimate[rule_name] = std_value * ((365.25 / 7.0) ** 0.5)
+    stdev_list = [value for value in annualised_stdev_estimate.values()]
+    ave_stdev = np.nanmean(stdev_list)
+    norm_stdev = [ave_stdev] * len(stdev_list)
+    norm_factor = [stdev / ave_stdev for stdev in stdev_list]
+    return norm_stdev, norm_factor
+
+
+def get_corr_estimator_for_instrument_weight(data, fit_end, span=500000, min_periods=10):
+    raw_corr = data.ewm(span=span, min_periods=min_periods, ignore_na=True).corr(
         pairwise=True)  # span 和min_periods 都是config 里面的4倍，因为4个instruments
-    columns = data_for_analysis.columns
+    columns = data.columns
     size_of_matrix = len(columns)
     corr_matrix_values = (raw_corr[raw_corr.index.get_level_values(0) < fit_end].tail(
         size_of_matrix).values)  # 截取fit_period之前的数据
+    corr_matrix_values = [[max(0, item) for item in sublist] for sublist in corr_matrix_values]
     return corr_matrix_values

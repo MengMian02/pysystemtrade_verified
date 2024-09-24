@@ -5,9 +5,8 @@ from scipy.optimize import minimize
 
 from refactory.data_source import get_daily_price, get_raw_carry_data, get_block_move_price
 from refactory.utils import get_volatily, ewmac, calculate_mixed_volatility, get_corr_estimator_for_instrument_weight, \
-    get_stdev_estimator_for_instrument_weight, get_stdev_estimator, get_mean_estimator, get_corr_estimator
+    get_stdev_estimator_for_instrument_weight, get_stdev_estimator, get_mean_estimator
 from sysdata.config.configdata import Config
-from sysquant.fitting_dates import fitDates, listOfFittingDates
 
 my_config = Config()
 my_config.instruments = ["CORN", "SOFR", "SP500_micro", 'US10']
@@ -120,20 +119,12 @@ def process_instrument_pnl(instrument):
     start_dates_per_period = list(pd.date_range(end_date, start_date, freq='-' + '365D'))
     start_dates_per_period.reverse()
     # Rolling 方法
-    # periods = []
     end_list = []
-    # fit_start = start_date
 
     for periods_index in range(len(start_dates_per_period))[1:-1]:
-        # period_start = start_dates_per_period[periods_index]
-        # period_end = start_dates_per_period[periods_index + 1]
         fit_end = start_dates_per_period[periods_index]
         end_list.append(fit_end)
-        # fit_date = fitDates(fit_start, fit_end, period_start, period_end)
-        # periods.append(fit_date)
 
-    # periods = [fitDates(start_date, start_date, start_date, start_dates_per_period[1], no_data=True)] + periods
-    # fit_period = listOfFittingDates(periods)
     fit_end_list = end_list
     weight_list = []
     for i in range(len(fit_end_list)):
@@ -182,14 +173,36 @@ def get_weight(data_for_analysis, date_period, fit_end_list, strategy_number=2):
     norm_factor = [stdev / ave_stdev for stdev in stdev_list]
     mean_list = get_mean_estimator(data_for_analysis, fit_end, span, min_periods)  # mean list 没问题
     norm_mean = [a / b for a, b in zip(mean_list, norm_factor)]
+    corr = get_corr_estimator_for_instrument_weight(data_for_analysis, fit_end, span,
+                                                    min_periods_corr)  # corr matrix 没问题
 
-    corr_matrix = get_corr_estimator(data_for_analysis, fit_end, span, min_periods_corr)  # corr matrix 没问题
-
-    sigma = np.diag(norm_stdev).dot(corr_matrix).dot(np.diag(norm_stdev))  # sigma 没问题
     mus = np.array(norm_mean, ndmin=2).transpose()  # mus 没问题
+    sigma = np.diag(norm_stdev).dot(corr).dot(np.diag(norm_stdev))  # sigma 没问题
+
     start_weights = np.array([1 / strategy_number] * strategy_number)
     bounds = [(0.0, 1.0)] * strategy_number
+    cdict = [{"type": "eq", "fun": addem}]
+    ans = minimize(neg_SR, start_weights, (sigma, mus), method='SLSQP', constraints=cdict, bounds=bounds, tol=0.00001)
+    weight = ans['x']
+    return weight
 
+
+def caculate_instrument_weights(pnl_df):
+    daily_pnl = pnl_df.resample("1B").sum()
+    daily_pnl[daily_pnl == 0.0] = np.nan
+
+    instrument_number = len(daily_pnl.columns)
+    weekly_ret = daily_pnl.resample('W').sum()  # SP500_micro 的一些数值不对，其他的都能对的上。怀疑是不是一些nan被填充了
+    fit_end = weekly_ret.index[-1]
+    norm_stdev, _ = get_stdev_estimator_for_instrument_weight(weekly_ret, fit_end)
+    norm_mean = [0.5 * asset_stdev for asset_stdev in norm_stdev]
+    corr = get_corr_estimator_for_instrument_weight(weekly_ret, fit_end)
+
+    mus = np.array(norm_mean, ndmin=2).transpose()  # mus 没问题
+    sigma = np.diag(norm_stdev).dot(corr).dot(np.diag(norm_stdev))
+
+    start_weights = np.array([1 / instrument_number] * instrument_number)
+    bounds = [(0.0, 1.0)] * instrument_number
     cdict = [{"type": "eq", "fun": addem}]
     ans = minimize(neg_SR, start_weights, (sigma, mus), method='SLSQP', constraints=cdict, bounds=bounds, tol=0.00001)
     weight = ans['x']
@@ -225,16 +238,10 @@ def get_div_mult(instrument_code, weights):
     start_dates_per_period = list(pd.date_range(end_date, start_date, freq='-' + '365D'))
     start_dates_per_period.reverse()
     # Rolling 方法
-    # periods = []
     fit_end_list = []
     for periods_index in range(len(start_dates_per_period))[1:-1]:
-        # period_start = start_dates_per_period[periods_index]
-        # period_end = start_dates_per_period[periods_index + 1]
-        # fit_start = start_date
         end = start_dates_per_period[periods_index]  # 之前的fit end 是 period end, 所以就造成了fit 和 use 的一部分重叠
         fit_end_list.append(end)
-        # fit_date = fitDates(fit_start, end, period_start, period_end)
-        # periods.append(fit_date)
 
     weights.index = forecast_df.index
     weights = weights.rename(columns={0: 'ewmac32', 1: 'ewmac8'})
@@ -327,26 +334,6 @@ def calcuate_instrument_pnl(instrument, position):
     pnl.index = pd.to_datetime(pnl.index)
     daily_pnl = pnl.resample("B").sum()
     return daily_pnl
-
-
-def caculate_instrument_weights(pnl_df):
-    daily_pnl = pnl_df.resample("1B").sum()
-    daily_pnl[daily_pnl == 0.0] = np.nan
-
-    instrument_number = len(daily_pnl.columns)
-    weekly_ret = daily_pnl.resample('W').sum()  # SP500_micro 的一些数值不对，其他的都能对的上。怀疑是不是一些nan被填充了
-    fit_end = weekly_ret.index[-1]
-    norm_stdev, _ = get_stdev_estimator_for_instrument_weight(weekly_ret, fit_end)
-    norm_mean = [0.5 * asset_stdev for asset_stdev in norm_stdev]
-    mus = np.array(norm_mean, ndmin=2).transpose()  # mus 没问题
-    corr = get_corr_estimator_for_instrument_weight(weekly_ret, fit_end)
-    sigma = np.diag(norm_stdev).dot(corr).dot(np.diag(norm_stdev))
-    start_weights = np.array([1 / instrument_number] * instrument_number)
-    bounds = [(0.0, 1.0)] * instrument_number
-    cdict = [{"type": "eq", "fun": addem}]
-    ans = minimize(neg_SR, start_weights, (sigma, mus), method='SLSQP', constraints=cdict, bounds=bounds, tol=0.00001)
-    weight = ans['x']
-    return weight
 
 
 ############################################################################################# 分割线

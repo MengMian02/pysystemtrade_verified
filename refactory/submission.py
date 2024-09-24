@@ -104,6 +104,18 @@ def combine_instrument_pnl_df(weekly_ret):
     return stacked_data
 
 
+def calculate_forecast_weights(pnl_df, fit_end, number):
+    span = len(my_config.instruments) * 50000
+    min_periods_corr = len(my_config.instruments) * 10
+    min_periods = len(my_config.instruments) * 5
+    norm_stdev, norm_factor = get_stdev_estimator_for_instrument_weight(pnl_df, fit_end, span, min_periods)
+    mean_list = get_mean_estimator(pnl_df, fit_end, span, min_periods)
+    norm_mean = [a / b for a, b in zip(mean_list, norm_factor)]
+    corr = get_corr_estimator_for_instrument_weight(pnl_df, fit_end, span, min_periods_corr)
+    weight = optimisation(number, corr, norm_mean, norm_stdev)
+    return weight
+
+
 def process_instrument_pnl(instrument):
     price = get_daily_price(instrument)
     forecast_df = calculate_forecasts(price)
@@ -114,25 +126,13 @@ def process_instrument_pnl(instrument):
 
     start_date = returns.index[0]
     end_date = returns.index[-1]
-    # 根据数据起始和结束日期，生成各period的开始日期，且从后朝前看
-    start_dates_per_period = list(pd.date_range(end_date, start_date, freq='-' + '365D'))
+
+    start_dates_per_period = pd.date_range(end_date, start_date, freq='-365D').to_list()
     start_dates_per_period.reverse()
-    # Rolling 方法
-    end_list = []
+    end_list = start_dates_per_period[1:-1]
 
-    for periods_index in range(len(start_dates_per_period))[1:-1]:
-        fit_end = start_dates_per_period[periods_index]
-        end_list.append(fit_end)
-
-    fit_end_list = end_list
-    weight_list = []
-    for i in range(len(fit_end_list)):
-        weight = get_weight(returns, i, fit_end_list)
-        weight_list.append(weight)
-    weights1 = pd.Series(weight_list)
-    weights1.index = fit_end_list
+    weights1 = pd.Series([calculate_forecast_weights(returns, end, 2) for end in end_list], index=end_list)
     weights1 = weights1.reindex(forecast_df.index, method='ffill')
-
     replace_nan = lambda x: [0.5, 0.5] if isinstance(x, float) else x
     weights1 = weights1.apply(replace_nan)
     weight_df = pd.DataFrame(weights1.tolist())
@@ -157,24 +157,6 @@ def process_instrument_pnl(instrument):
     daily_pnl = calcuate_instrument_pnl(instrument, buffered_position)
 
     return daily_pnl
-
-
-def get_weight(data_for_analysis, date_period, fit_end_list, number=2):
-    fit_end = fit_end_list[date_period]
-
-    span = len(my_config.instruments) * 50000
-    min_periods_corr = len(my_config.instruments) * 10
-    min_periods = len(my_config.instruments) * 5
-    norm_stdev, norm_factor = get_stdev_estimator_for_instrument_weight(data_for_analysis, fit_end, span, min_periods)
-
-    mean_list = get_mean_estimator(data_for_analysis, fit_end, span, min_periods)
-    norm_mean = [a / b for a, b in zip(mean_list, norm_factor)]
-    corr = get_corr_estimator_for_instrument_weight(data_for_analysis, fit_end, span,
-                                                    min_periods_corr)
-
-    weight = optimisation(number, corr, norm_mean, norm_stdev)
-
-    return weight
 
 
 def caculate_instrument_weights(pnl_df):

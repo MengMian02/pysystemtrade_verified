@@ -138,15 +138,7 @@ def process_instrument_pnl(instrument):
     # forecast_weights.rename(columns={0: 'ewmac32', 1: 'ewmac8'}, inplace=True)
     # forecast_weights = forecast_weights[['ewmac8', 'ewmac32']]
 
-    #######################################################
-
-    weekly_forecast = forecast_df.resample('W').last()
-    date1 = weekly_forecast.index[0]
-    date = weekly_forecast.index[-1]
-    fit_end_list = generate_end_list(date1, date)
-    fdm = get_fdm(fit_end_list, forecast_weights, weekly_forecast)
-
-    #######################################################
+    fdm = calculate_forecast_diversify_multiplier(forecast_df, forecast_weights)
     combined_forecast = (forecast_weights * forecast_df).sum(axis=1) * fdm
     capped_combined_forecast = combined_forecast.clip(20, -20)
 
@@ -162,14 +154,10 @@ def process_instrument_pnl(instrument):
     return daily_pnl
 
 
-def generate_end_list(start_date, end_date):
-    start_dates_per_period = pd.date_range(end_date, start_date, freq='-365D').to_list()
-    start_dates_per_period.reverse()
-    end_list = start_dates_per_period[1:-1]
-    return end_list
+def calculate_forecast_diversify_multiplier(forecasts, forecast_weights):
+    weekly_forecast = forecasts.resample('W').last()
+    fit_end_list = generate_end_list(weekly_forecast.index[0], weekly_forecast.index[-1])
 
-
-def get_fdm(fit_end_list, forecast_weights, weekly_forecast):
     corr_list = []
     for i in range(len(fit_end_list)):
         fit_end = fit_end_list[i]
@@ -179,6 +167,7 @@ def get_fdm(fit_end_list, forecast_weights, weekly_forecast):
         corr_matrix_values = (raw_corr[raw_corr.index.get_level_values(0) < fit_end].tail(
             size_of_matrix).values)
         corr_list.append(corr_matrix_values)
+
     div_mult = []
     for corrmatrix, start_of_period in zip(corr_list, fit_end_list):
         weight_slice = forecast_weights[:start_of_period]
@@ -188,10 +177,18 @@ def get_fdm(fit_end_list, forecast_weights, weekly_forecast):
         dm = np.min([1 / risk, 2.5])
         div_mult.append(dm)
     div_mult_df = pd.Series(div_mult, index=(fit_end_list))
+
     div_mult_df_daily = div_mult_df.reindex(forecast_weights.index, method='ffill')
     div_mult_df_daily[div_mult_df_daily.isna()] = 1.0
-    div_mult_df_smoothed = div_mult_df_daily.ewm(span=125).mean()
-    return div_mult_df_smoothed
+    fdm = div_mult_df_daily.ewm(span=125).mean()
+    return fdm
+
+
+def generate_end_list(start_date, end_date):
+    start_dates_per_period = pd.date_range(end_date, start_date, freq='-365D').to_list()
+    start_dates_per_period.reverse()
+    end_list = start_dates_per_period[1:-1]
+    return end_list
 
 
 def caculate_instrument_weights(pnl_df):

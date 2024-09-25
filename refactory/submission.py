@@ -158,22 +158,20 @@ def calculate_forecast_diversify_multiplier(forecasts, forecast_weights):
     weekly_forecast = forecasts.resample('W').last()
     fit_end_list = generate_end_list(weekly_forecast.index[0], weekly_forecast.index[-1])
 
-    size_of_matrix = len(weekly_forecast.columns)
     raw_corr = weekly_forecast.ewm(span=250, min_periods=20, ignore_na=True).corr(pairwise=True)
+    size_of_matrix = len(weekly_forecast.columns)
     corr_list = []
     for fit_end in fit_end_list:
-        corr_matrix_values = (raw_corr[raw_corr.index.get_level_values(0) < fit_end].tail(size_of_matrix).values)
-        corr_list.append(corr_matrix_values)
+        corr = raw_corr[raw_corr.index.get_level_values(0) < fit_end].tail(size_of_matrix).values
+        corr_list.append(corr)
 
     div_mult = []
-    for corrmatrix, start_of_period in zip(corr_list, fit_end_list):
-        weight_slice = forecast_weights[:start_of_period]
-        weight_np = np.array(weight_slice.iloc[-1])
-        variance = weight_np.dot(corrmatrix).dot(weight_np.transpose())
-        risk = variance ** 0.5
-        dm = np.min([1 / risk, 2.5])
+    for corr, fid_end in zip(corr_list, fit_end_list):
+        weight_np = forecast_weights[:fid_end].iloc[-1].values
+        variance = weight_np.dot(corr).dot(weight_np.transpose())
+        dm = np.min([1 / variance ** 0.5, 2.5])
         div_mult.append(dm)
-    div_mult_df = pd.Series(div_mult, index=(fit_end_list))
+    div_mult_df = pd.Series(div_mult, index=fit_end_list)
 
     div_mult_df_daily = div_mult_df.reindex(forecast_weights.index, method='ffill')
     div_mult_df_daily[div_mult_df_daily.isna()] = 1.0

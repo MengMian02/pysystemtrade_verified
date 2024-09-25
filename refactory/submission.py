@@ -209,7 +209,7 @@ def process_instrument_pnl(instrument):
     combined_forecast = (forecast_weights * forecast_df).sum(axis=1) * fdm
     final_forecast = combined_forecast.clip(20, -20)
 
-    buffered_position = apply_capped_position(final_forecast, instrument)
+    buffered_position = apply_buffered_position(final_forecast, instrument)
 
     daily_pnl = calcuate_instrument_pnl(instrument, buffered_position)
 
@@ -232,29 +232,26 @@ def main(my_config):
 ############################################################################################# 分割线
 
 
-def apply_capped_position(forecast, instrument):
+def apply_buffered_position(forecast, instrument, buffer_size=0.10):
     volatility_scalar = calculate_volatility_scalar(instrument)
     volatility_scalar = volatility_scalar.reindex(forecast.index, method='ffill')
-    subsystem_position_raw = volatility_scalar * forecast / 10.0
+    position_raw = volatility_scalar * forecast / 10.0
 
-    
-    vol_scalar = volatility_scalar.reindex(subsystem_position_raw.index).ffill()
-    avg_position = vol_scalar * 1.0 * 1.0  # 乘的是instr weight和idm, 目前为default 1
-    buffer_size = 0.10
-    buffer = avg_position * buffer_size
-    top_pos = subsystem_position_raw.ffill() + buffer.ffill()
-    bottom_pos = subsystem_position_raw.ffill() - buffer.ffill()
-    top_pos = top_pos.round()
-    bottom_pos = bottom_pos.round()
-    current_position = subsystem_position_raw.values[0]
+    buffer = volatility_scalar * 1.0 * 1.0 * buffer_size  # 乘的是instr weight和idm, 目前为default 1
+    top_pos = (position_raw + buffer).round()
+    bottom_pos = (position_raw - buffer).round()
+    position_raw = position_raw.round()
+
+    current_position = position_raw.values[0]
     if np.isnan(current_position):
         current_position = 0.0
     buffered_position_list = [current_position]
-    for index in range(len(subsystem_position_raw))[1:]:
-        current_position = apply_buffer_for_single_period(current_position, subsystem_position_raw.values[index],
+    for index in range(len(position_raw))[1:]:
+        current_position = apply_buffer_for_single_period(current_position, position_raw.values[index],
                                                           top_pos.values[index], bottom_pos.values[index])
         buffered_position_list.append(current_position)
-    buffered_position = pd.Series(buffered_position_list, index=subsystem_position_raw.index)
+    buffered_position = pd.Series(buffered_position_list, index=position_raw.index)
+
     return buffered_position
 
 

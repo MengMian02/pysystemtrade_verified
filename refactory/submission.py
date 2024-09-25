@@ -74,12 +74,7 @@ def calcuate_instrument_pnl(instrument, position):
     point_size = get_point_size(instrument)
     pnl_in_points = calculate_pnl(positions=position, prices=price)
     pnl_in_ccy = pnl_in_points * point_size
-
-    fx = pd.Series(1.0, index=price.index)
-    fx_aligned = fx.reindex(pnl_in_ccy.index, method="ffill")
-    pnl = pnl_in_ccy * fx_aligned
-    
-    daily_pnl = pnl.resample("B").sum()
+    daily_pnl = pnl_in_ccy.resample("B").sum()
     return daily_pnl
 
 

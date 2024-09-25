@@ -141,8 +141,28 @@ def process_instrument_pnl(instrument):
     # forecast_weights.rename(columns={0: 'ewmac32', 1: 'ewmac8'}, inplace=True)
     # forecast_weights = forecast_weights[['ewmac8', 'ewmac32']]
 
-    fdm = calculate_forecast_diversification_multiplier(instrument, forecast_weights)
+    #######################################################
 
+    weekly_index = pd.date_range(start=forecast_df.index[0], end='2023-09-03', freq='W')  # 结束日期需要自行根据品种设定
+    weekly_forecast = forecast_df.reindex(weekly_index, method='ffill')
+
+    date1 = weekly_forecast.index[0]
+    date = weekly_forecast.index[-1]
+    # 根据数据起始和结束日期，生成各period的开始日期，且从后朝前看
+    period = list(pd.date_range(date, date1, freq='-' + '365D'))
+    period.reverse()
+    # Rolling 方法
+    fit_end_list = []
+    for periods_index in range(len(period))[1:-1]:
+        end1 = period[periods_index]  # 之前的fit end 是 period end, 所以就造成了fit 和 use 的一部分重叠
+        fit_end_list.append(end1)
+    # fit_end_list = end_list
+
+    forecast_weights.index = forecast_df.index
+    forecast_weights = forecast_weights.rename(columns={0: 'ewmac32', 1: 'ewmac8'})
+    fdm = get_fdm(fit_end_list, forecast_weights, weekly_forecast)
+
+    #######################################################
     combined_forecast = (forecast_weights * forecast_df).sum(axis=1) * fdm
     capped_combined_forecast = combined_forecast.clip(20, -20)
 
@@ -158,26 +178,7 @@ def process_instrument_pnl(instrument):
     return daily_pnl
 
 
-def calculate_forecast_diversification_multiplier(instrument_code, forecast_weights):
-    price = get_daily_price(instrument_code)
-    forecast_df = calculate_forecasts(price)
-
-    weekly_index = pd.date_range(start=forecast_df.index[0], end='2023-09-03', freq='W')  # 结束日期需要自行根据品种设定
-    weekly_forecast = forecast_df.reindex(weekly_index, method='ffill')
-    start_date = weekly_forecast.index[0]
-    end_date = weekly_forecast.index[-1]
-
-    # 根据数据起始和结束日期，生成各period的开始日期，且从后朝前看
-    start_dates_per_period = list(pd.date_range(end_date, start_date, freq='-' + '365D'))
-    start_dates_per_period.reverse()
-    # Rolling 方法
-    fit_end_list = []
-    for periods_index in range(len(start_dates_per_period))[1:-1]:
-        end = start_dates_per_period[periods_index]  # 之前的fit end 是 period end, 所以就造成了fit 和 use 的一部分重叠
-        fit_end_list.append(end)
-
-    forecast_weights.index = forecast_df.index
-    forecast_weights = forecast_weights.rename(columns={0: 'ewmac32', 1: 'ewmac8'})
+def get_fdm(fit_end_list, forecast_weights, weekly_forecast):
     corr_list = []
     for i in range(len(fit_end_list)):
         fit_end = fit_end_list[i]
@@ -187,7 +188,6 @@ def calculate_forecast_diversification_multiplier(instrument_code, forecast_weig
         corr_matrix_values = (raw_corr[raw_corr.index.get_level_values(0) < fit_end].tail(
             size_of_matrix).values)
         corr_list.append(corr_matrix_values)
-
     div_mult = []
     for corrmatrix, start_of_period in zip(corr_list, fit_end_list):
         weight_slice = forecast_weights[:start_of_period]
@@ -196,13 +196,10 @@ def calculate_forecast_diversification_multiplier(instrument_code, forecast_weig
         risk = variance ** 0.5
         dm = np.min([1 / risk, 2.5])
         div_mult.append(dm)
-
     div_mult_df = pd.Series(div_mult, index=(fit_end_list))
     div_mult_df_daily = div_mult_df.reindex(forecast_weights.index, method='ffill')
-
     div_mult_df_daily[div_mult_df_daily.isna()] = 1.0
     div_mult_df_smoothed = div_mult_df_daily.ewm(span=125).mean()
-
     return div_mult_df_smoothed
 
 

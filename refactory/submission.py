@@ -104,6 +104,74 @@ def combine_instrument_pnl_df(weekly_ret):
     return stacked_data
 
 
+def calculate_forecast_diversify_multiplier(forecasts, forecast_weights):
+    weekly_forecast = forecasts.resample('W').last()
+    fit_end_list = generate_end_list(weekly_forecast.index[0], weekly_forecast.index[-1])
+
+    full_corr = weekly_forecast.ewm(span=250, min_periods=20, ignore_na=True).corr(pairwise=True)
+    size_of_matrix = len(weekly_forecast.columns)
+    dm_list = []
+    for fit_end in fit_end_list:
+        corr = full_corr[full_corr.index.get_level_values(0) < fit_end].tail(size_of_matrix).values
+        w = forecast_weights[:fit_end].iloc[-1].values
+        variance = w.dot(corr).dot(w.transpose())
+        dm = np.min([1 / variance ** 0.5, 2.5])
+        dm_list.append(dm)
+
+    dm_yearly = pd.Series(dm_list, index=fit_end_list)
+    dm_daily = dm_yearly.reindex(forecast_weights.index, method='ffill')
+    dm_daily[dm_daily.isna()] = 1.0
+    dm_smoonth = dm_daily.ewm(span=125).mean()
+    return dm_smoonth
+
+
+def generate_end_list(start_date, end_date):
+    start_dates_per_period = pd.date_range(end_date, start_date, freq='-365D').to_list()
+    start_dates_per_period.reverse()
+    end_list = start_dates_per_period[1:-1]
+    return end_list
+
+
+def calculate_instrument_weights(pnl_df):
+    daily_pnl = pnl_df.resample("1B").sum()
+    daily_pnl[daily_pnl == 0.0] = np.nan
+
+    number = len(daily_pnl.columns)
+    weekly_ret = daily_pnl.resample('W').sum()  # SP500_micro 的一些数值不对，其他的都能对的上。怀疑是不是一些nan被填充了
+    fit_end = weekly_ret.index[-1]
+    span = 500000
+    min_periods = 10
+
+    norm_stdev, _ = get_stdev_estimator_for_instrument_weight(weekly_ret, fit_end, span, min_periods)
+    norm_mean = [0.5 * asset_stdev for asset_stdev in norm_stdev]
+    corr = get_corr_estimator_for_instrument_weight(weekly_ret, fit_end, span, min_periods)
+
+    weight = optimisation(number, corr, norm_mean, norm_stdev)
+    return weight
+
+
+def calculate_volatility_scalar(instrument_code, capital=1000000, annual_percentage_volatility_target=0.16):
+    block_value = get_block_value(instrument_code)
+    block_value.ffill(inplace=True)
+    # FIXME: 取错数据了
+    price = get_raw_carry_data(instrument_code)
+    price.ffill(inplace=True)
+    price0 = get_daily_price(instrument_code)
+    diff_volatility = calculate_mixed_volatility(price0.diff(), slow_vol_years=10)
+    diff_volatility.ffill(inplace=True)
+
+    percentage_volatility = 100.0 * (diff_volatility / price.abs())
+    currency_volatility = block_value * percentage_volatility
+    value_volatiliity = currency_volatility * 1
+
+    pecentage_volatility_target = annual_percentage_volatility_target / 16
+    cash_volatility_target = capital * pecentage_volatility_target
+
+    volatility_scalar = cash_volatility_target / value_volatiliity
+
+    return volatility_scalar
+
+
 def calculate_forecast_weights(pnl_df, fit_end):
     number = len(pnl_df.columns)
     span = len(my_config.instruments) * 50000
@@ -139,63 +207,13 @@ def process_instrument_pnl(instrument):
 
     fdm = calculate_forecast_diversify_multiplier(forecast_df, forecast_weights)
     combined_forecast = (forecast_weights * forecast_df).sum(axis=1) * fdm
-    capped_combined_forecast = combined_forecast.clip(20, -20)
-    avg_position = calculate_avg_position(instrument)
+    final_forecast = combined_forecast.clip(20, -20)
 
-    avg_position = avg_position.reindex(capped_combined_forecast.index, method='ffill')
-    subsystem_position_raw = avg_position * capped_combined_forecast / 10.0
-
-    buffered_position = apply_buffered_position(instrument, subsystem_position_raw)
+    buffered_position = apply_capped_position(final_forecast, instrument)
 
     daily_pnl = calcuate_instrument_pnl(instrument, buffered_position)
 
     return daily_pnl
-
-
-def calculate_forecast_diversify_multiplier(forecasts, forecast_weights):
-    weekly_forecast = forecasts.resample('W').last()
-    fit_end_list = generate_end_list(weekly_forecast.index[0], weekly_forecast.index[-1])
-
-    full_corr = weekly_forecast.ewm(span=250, min_periods=20, ignore_na=True).corr(pairwise=True)
-    size_of_matrix = len(weekly_forecast.columns)
-    dm_list = []
-    for fit_end in fit_end_list:
-        corr = full_corr[full_corr.index.get_level_values(0) < fit_end].tail(size_of_matrix).values
-        w = forecast_weights[:fit_end].iloc[-1].values
-        variance = w.dot(corr).dot(w.transpose())
-        dm = np.min([1 / variance ** 0.5, 2.5])
-        dm_list.append(dm)
-
-    dm_yearly = pd.Series(dm_list, index=fit_end_list)
-    dm_daily = dm_yearly.reindex(forecast_weights.index, method='ffill')
-    dm_daily[dm_daily.isna()] = 1.0
-    dm_smoonth = dm_daily.ewm(span=125).mean()
-    return dm_smoonth
-
-
-def generate_end_list(start_date, end_date):
-    start_dates_per_period = pd.date_range(end_date, start_date, freq='-365D').to_list()
-    start_dates_per_period.reverse()
-    end_list = start_dates_per_period[1:-1]
-    return end_list
-
-
-def caculate_instrument_weights(pnl_df):
-    daily_pnl = pnl_df.resample("1B").sum()
-    daily_pnl[daily_pnl == 0.0] = np.nan
-
-    number = len(daily_pnl.columns)
-    weekly_ret = daily_pnl.resample('W').sum()  # SP500_micro 的一些数值不对，其他的都能对的上。怀疑是不是一些nan被填充了
-    fit_end = weekly_ret.index[-1]
-    span = 500000
-    min_periods = 10
-
-    norm_stdev, _ = get_stdev_estimator_for_instrument_weight(weekly_ret, fit_end, span, min_periods)
-    norm_mean = [0.5 * asset_stdev for asset_stdev in norm_stdev]
-    corr = get_corr_estimator_for_instrument_weight(weekly_ret, fit_end, span, min_periods)
-
-    weight = optimisation(number, corr, norm_mean, norm_stdev)
-    return weight
 
 
 def main(my_config):
@@ -205,7 +223,7 @@ def main(my_config):
     pnl_df = pd.concat(pnl_list, axis=1)
     pnl_df.columns = instruments
 
-    weight = caculate_instrument_weights(pnl_df)
+    weight = calculate_instrument_weights(pnl_df)
     print(weight)
 
     return
@@ -214,45 +232,29 @@ def main(my_config):
 ############################################################################################# 分割线
 
 
-def calculate_avg_position(instrument_code, capital=1000000, perc_vol_target=16):
-    block_value = get_block_value(instrument_code)
+def apply_capped_position(forecast, instrument):
+    volatility_scalar = calculate_volatility_scalar(instrument)
+    volatility_scalar = volatility_scalar.reindex(forecast.index, method='ffill')
+    subsystem_position_raw = volatility_scalar * forecast / 10.0
 
-    daily_carry_price = get_raw_carry_data(instrument_code)
-    price = get_daily_price(instrument_code)
-    daily_returns = price.diff()
-    vol = calculate_mixed_volatility(daily_returns, slow_vol_years=10)
-    (daily_carry_price, vol) = daily_carry_price.align(vol, join='right')
-    perc_vol = 100.0 * (vol / daily_carry_price.ffill().abs())
-
-    instr_currency_vol = block_value.ffill() * perc_vol
-    instr_value_vol = instr_currency_vol.ffill()
-
-    annual_cash_vol_target = capital * perc_vol_target / 100
-    daily_cash_vol_target = annual_cash_vol_target / 16
-    vol_scalar = daily_cash_vol_target / instr_value_vol
-    return vol_scalar
-
-
-def apply_buffered_position(instrument, subsystem_position):
-    vol_scalar = calculate_avg_position(instrument)
-    vol_scalar = vol_scalar.reindex(subsystem_position.index).ffill()
+    
+    vol_scalar = volatility_scalar.reindex(subsystem_position_raw.index).ffill()
     avg_position = vol_scalar * 1.0 * 1.0  # 乘的是instr weight和idm, 目前为default 1
     buffer_size = 0.10
     buffer = avg_position * buffer_size
-    top_pos = subsystem_position.ffill() + buffer.ffill()
-    bottom_pos = subsystem_position.ffill() - buffer.ffill()
-    subsystem_position = subsystem_position.round()
+    top_pos = subsystem_position_raw.ffill() + buffer.ffill()
+    bottom_pos = subsystem_position_raw.ffill() - buffer.ffill()
     top_pos = top_pos.round()
     bottom_pos = bottom_pos.round()
-    current_position = subsystem_position.values[0]
+    current_position = subsystem_position_raw.values[0]
     if np.isnan(current_position):
         current_position = 0.0
     buffered_position_list = [current_position]
-    for index in range(len(subsystem_position))[1:]:
-        current_position = apply_buffer_for_single_period(current_position, subsystem_position.values[index],
+    for index in range(len(subsystem_position_raw))[1:]:
+        current_position = apply_buffer_for_single_period(current_position, subsystem_position_raw.values[index],
                                                           top_pos.values[index], bottom_pos.values[index])
         buffered_position_list.append(current_position)
-    buffered_position = pd.Series(buffered_position_list, index=subsystem_position.index)
+    buffered_position = pd.Series(buffered_position_list, index=subsystem_position_raw.index)
     return buffered_position
 
 
@@ -276,7 +278,6 @@ def calcuate_instrument_pnl(instrument, position):
     pnl.index = pd.to_datetime(pnl.index)
     daily_pnl = pnl.resample("B").sum()
     return daily_pnl
-
 
 
 if __name__ == '__main__':

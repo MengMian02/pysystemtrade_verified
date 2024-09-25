@@ -69,15 +69,6 @@ def calculate_pnl(positions: pd.Series, prices: pd.Series):
     return returns
 
 
-def calcuate_instrument_pnl(instrument, position):
-    price = get_daily_price(instrument)
-    point_size = get_point_size(instrument)
-    pnl_in_points = calculate_pnl(positions=position, prices=price)
-    pnl_in_ccy = pnl_in_points * point_size
-    daily_pnl = pnl_in_ccy.resample("B").sum()
-    return daily_pnl
-
-
 def calculate_factor_pnl(forecast, price, capital, point_size, risk_target):
     position_target = get_position_target(price, point_size, capital, risk_target)
     aligned_ave = position_target.reindex(forecast.index, method='ffill')
@@ -86,20 +77,6 @@ def calculate_factor_pnl(forecast, price, capital, point_size, risk_target):
     pnl = pnl_in_points * point_size
     daily_pnl = pnl.resample("B").sum()
     return daily_pnl
-
-
-def process_factors_pnl(instrument_code, capital=1000000, risk_target=0.16, target_abs_forecast=10):
-    price = get_daily_price(instrument_code)
-    forecast_df = calculate_forecasts(price)
-    forecast_df = forecast_df / target_abs_forecast
-
-    point_size = get_point_size(instrument_code)
-    func_pnl = lambda forecast: calculate_factor_pnl(forecast, price, capital, point_size, risk_target)
-    factor_pnl_df = forecast_df.apply(func_pnl, axis=0)
-    factor_pnl_df[factor_pnl_df == 0.0] = np.nan
-
-    weekly_pnl_df = factor_pnl_df.resample('W').sum()
-    return weekly_pnl_df
 
 
 def combine_instrument_pnl_df(weekly_ret):
@@ -195,6 +172,63 @@ def calculate_forecast_weights(pnl_df, fit_end):
     return weight
 
 
+def apply_buffer(position_raw, volatility_scalar, buffer_size):
+    buffer = volatility_scalar * buffer_size
+    top_pos = (position_raw + buffer).round()
+    bottom_pos = (position_raw - buffer).round()
+    position_raw = position_raw.round()
+
+    last = position_raw.values[0]
+    buffered_position_list = [last]
+    for index in range(len(position_raw))[1:]:
+        last = adjust_by_buffer(last, position_raw.values[index],
+                                top_pos.values[index], bottom_pos.values[index])
+        buffered_position_list.append(last)
+    buffered_position = pd.Series(buffered_position_list, index=position_raw.index)
+    # last = position_raw.shift(1).bfill()
+    # df = pd.DataFrame({'last': last, 'current': position_raw, 'top': top_pos, 'bottom': bottom_pos})
+    # buffered_position = df.apply(lambda x: adjust_by_buffer(x['last'], x['current'], x['top'], x['bottom']), axis=1)
+
+    return buffered_position
+
+
+def adjust_by_buffer(last, current, top, bottom, trade_to_edge=True):
+    result = last
+    if trade_to_edge:
+        if last > top:
+            result = top
+        elif last < bottom:
+            result = bottom
+    else:
+        if last > top or last < bottom:
+            result = current
+    return result
+
+
+def calculate_instrument_pnl(instrument, position_buffered, price):
+    pnl_in_points = calculate_pnl(positions=position_buffered, prices=(price))
+    point_size = get_point_size(instrument)
+    pnl_in_ccy = pnl_in_points * point_size
+    pnl_daily = pnl_in_ccy.resample("B").sum()
+    return pnl_daily
+
+
+############################################################################################# 分割线
+
+def process_factors_pnl(instrument_code, capital=1000000, risk_target=0.16, target_abs_forecast=10):
+    price = get_daily_price(instrument_code)
+    forecast_df = calculate_forecasts(price)
+    forecast_df = forecast_df / target_abs_forecast
+
+    point_size = get_point_size(instrument_code)
+    func_pnl = lambda forecast: calculate_factor_pnl(forecast, price, capital, point_size, risk_target)
+    factor_pnl_df = forecast_df.apply(func_pnl, axis=0)
+    factor_pnl_df[factor_pnl_df == 0.0] = np.nan
+
+    weekly_pnl_df = factor_pnl_df.resample('W').sum()
+    return weekly_pnl_df
+
+
 def process_instrument_pnl(instrument):
     price = get_daily_price(instrument)
     forecast_df = calculate_forecasts(price)
@@ -222,10 +256,9 @@ def process_instrument_pnl(instrument):
     position_raw = volatility_scalar * final_forecast / 10.0
     position_raw.fillna(0.0, inplace=True)
     position_buffered = apply_buffer(position_raw, volatility_scalar, 0.10)
+    pnl_daily = calculate_instrument_pnl(instrument, position_buffered, price)
 
-    daily_pnl = calcuate_instrument_pnl(instrument, position_buffered)
-
-    return daily_pnl
+    return pnl_daily
 
 
 def main(my_config):
@@ -239,43 +272,6 @@ def main(my_config):
     print(weight)
 
     return
-
-
-############################################################################################# 分割线
-
-
-def apply_buffer(position_raw, volatility_scalar, buffer_size):
-    buffer = volatility_scalar * buffer_size
-    top_pos = (position_raw + buffer).round()
-    bottom_pos = (position_raw - buffer).round()
-    position_raw = position_raw.round()
-
-    last = position_raw.values[0]
-    buffered_position_list = [last]
-    for index in range(len(position_raw))[1:]:
-        last = adjust_by_buffer(last, position_raw.values[index],
-                                top_pos.values[index], bottom_pos.values[index])
-        buffered_position_list.append(last)
-    buffered_position = pd.Series(buffered_position_list, index=position_raw.index)
-
-    # last = position_raw.shift(1).bfill()
-    # df = pd.DataFrame({'last': last, 'current': position_raw, 'top': top_pos, 'bottom': bottom_pos})
-    # buffered_position = df.apply(lambda x: adjust_by_buffer(x['last'], x['current'], x['top'], x['bottom']), axis=1)
-
-    return buffered_position
-
-
-def adjust_by_buffer(last, current, top, bottom, trade_to_edge=True):
-    result = last
-    if trade_to_edge:
-        if last > top:
-            result = top
-        elif last < bottom:
-            result = bottom
-    else:
-        if last > top or last < bottom:
-            result = current
-    return result
 
 
 if __name__ == '__main__':

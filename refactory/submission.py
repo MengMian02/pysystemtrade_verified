@@ -141,13 +141,9 @@ def process_instrument_pnl(instrument):
     #######################################################
 
     weekly_forecast = forecast_df.resample('W').last()
-
     date1 = weekly_forecast.index[0]
     date = weekly_forecast.index[-1]
     fit_end_list = generate_end_list(date1, date)
-
-    # forecast_weights.index = forecast_df.index
-    forecast_weights = forecast_weights.rename(columns={0: 'ewmac32', 1: 'ewmac8'})
     fdm = get_fdm(fit_end_list, forecast_weights, weekly_forecast)
 
     #######################################################

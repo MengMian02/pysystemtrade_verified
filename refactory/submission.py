@@ -160,14 +160,14 @@ def calculate_forecast_diversify_multiplier(forecasts, forecast_weights):
 
     raw_corr = weekly_forecast.ewm(span=250, min_periods=20, ignore_na=True).corr(pairwise=True)
     size_of_matrix = len(weekly_forecast.columns)
+    div_mult = []
     corr_list = []
     for fit_end in fit_end_list:
         corr = raw_corr[raw_corr.index.get_level_values(0) < fit_end].tail(size_of_matrix).values
         corr_list.append(corr)
 
-    div_mult = []
-    for corr, fid_end in zip(corr_list, fit_end_list):
-        weight_np = forecast_weights[:fid_end].iloc[-1].values
+    for corr, fit_end in zip(corr_list, fit_end_list):
+        weight_np = forecast_weights[:fit_end].iloc[-1].values
         variance = weight_np.dot(corr).dot(weight_np.transpose())
         dm = np.min([1 / variance ** 0.5, 2.5])
         div_mult.append(dm)

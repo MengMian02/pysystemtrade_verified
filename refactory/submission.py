@@ -158,14 +158,11 @@ def calculate_forecast_diversify_multiplier(forecasts, forecast_weights):
     weekly_forecast = forecasts.resample('W').last()
     fit_end_list = generate_end_list(weekly_forecast.index[0], weekly_forecast.index[-1])
 
+    size_of_matrix = len(weekly_forecast.columns)
+    raw_corr = weekly_forecast.ewm(span=250, min_periods=20, ignore_na=True).corr(pairwise=True)
     corr_list = []
-    for i in range(len(fit_end_list)):
-        fit_end = fit_end_list[i]
-        raw_corr = weekly_forecast.ewm(span=250, min_periods=20, ignore_na=True).corr(pairwise=True)
-        columns = weekly_forecast.columns
-        size_of_matrix = len(columns)
-        corr_matrix_values = (raw_corr[raw_corr.index.get_level_values(0) < fit_end].tail(
-            size_of_matrix).values)
+    for fit_end in fit_end_list:
+        corr_matrix_values = (raw_corr[raw_corr.index.get_level_values(0) < fit_end].tail(size_of_matrix).values)
         corr_list.append(corr_matrix_values)
 
     div_mult = []

@@ -141,9 +141,9 @@ def process_instrument_pnl(instrument):
     # forecast_weights.rename(columns={0: 'ewmac32', 1: 'ewmac8'}, inplace=True)
     # forecast_weights = forecast_weights[['ewmac8', 'ewmac32']]
 
-    forecast_div_multiplier = get_div_mult(instrument, forecast_weights)
+    fdm = calculate_forecast_diversification_multiplier(instrument, forecast_weights)
 
-    combined_forecast = (forecast_weights * forecast_df).sum(axis=1) * forecast_div_multiplier
+    combined_forecast = (forecast_weights * forecast_df).sum(axis=1) * fdm
     capped_combined_forecast = combined_forecast.clip(20, -20)
 
     avg_position = calculate_avg_position(instrument)
@@ -158,7 +158,7 @@ def process_instrument_pnl(instrument):
     return daily_pnl
 
 
-def get_div_mult(instrument_code, forecast_weights):
+def calculate_forecast_diversification_multiplier(instrument_code, forecast_weights):
     price = get_daily_price(instrument_code)
     forecast_df = calculate_forecasts(price)
 

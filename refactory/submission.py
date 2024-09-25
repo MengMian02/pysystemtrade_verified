@@ -158,25 +158,21 @@ def calculate_forecast_diversify_multiplier(forecasts, forecast_weights):
     weekly_forecast = forecasts.resample('W').last()
     fit_end_list = generate_end_list(weekly_forecast.index[0], weekly_forecast.index[-1])
 
-    raw_corr = weekly_forecast.ewm(span=250, min_periods=20, ignore_na=True).corr(pairwise=True)
+    full_corr = weekly_forecast.ewm(span=250, min_periods=20, ignore_na=True).corr(pairwise=True)
     size_of_matrix = len(weekly_forecast.columns)
-    div_mult = []
-    corr_list = []
+    dm_list = []
     for fit_end in fit_end_list:
-        corr = raw_corr[raw_corr.index.get_level_values(0) < fit_end].tail(size_of_matrix).values
-        corr_list.append(corr)
-
-    for corr, fit_end in zip(corr_list, fit_end_list):
-        weight_np = forecast_weights[:fit_end].iloc[-1].values
-        variance = weight_np.dot(corr).dot(weight_np.transpose())
+        corr = full_corr[full_corr.index.get_level_values(0) < fit_end].tail(size_of_matrix).values
+        w = forecast_weights[:fit_end].iloc[-1].values
+        variance = w.dot(corr).dot(w.transpose())
         dm = np.min([1 / variance ** 0.5, 2.5])
-        div_mult.append(dm)
-    div_mult_df = pd.Series(div_mult, index=fit_end_list)
+        dm_list.append(dm)
 
-    div_mult_df_daily = div_mult_df.reindex(forecast_weights.index, method='ffill')
-    div_mult_df_daily[div_mult_df_daily.isna()] = 1.0
-    fdm = div_mult_df_daily.ewm(span=125).mean()
-    return fdm
+    dm_yearly = pd.Series(dm_list, index=fit_end_list)
+    dm_daily = dm_yearly.reindex(forecast_weights.index, method='ffill')
+    dm_daily[dm_daily.isna()] = 1.0
+    dm_smoonth = dm_daily.ewm(span=125).mean()
+    return dm_smoonth
 
 
 def generate_end_list(start_date, end_date):

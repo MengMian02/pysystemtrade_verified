@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 from copy import copy
 
-from refactory.data_source import get_daily_price, get_raw_carry_data, get_point_size
+from refactory.data_source import get_daily_price, get_raw_carry_data, get_point_size, get_block_value
 from refactory.utils import get_volatily, ewmac, calculate_mixed_volatility, get_corr_estimator_for_instrument_weight, \
     get_stdev_estimator_for_instrument_weight, get_mean_estimator, optimisation
 from sysdata.config.configdata import Config
@@ -215,8 +215,7 @@ def main(my_config):
 
 
 def calculate_avg_position(instrument_code, capital=1000000, perc_vol_target=16):
-    point_size = get_point_size(instrument_code)
-    block_value = get_block_value(instrument_code, point_size)
+    block_value = get_block_value(instrument_code)
 
     daily_carry_price = get_raw_carry_data(instrument_code)
     price = get_daily_price(instrument_code)
@@ -278,15 +277,6 @@ def calcuate_instrument_pnl(instrument, position):
     daily_pnl = pnl.resample("B").sum()
     return daily_pnl
 
-
-#################################################################################################
-# FIXME: 逻辑有误
-#################################################################################################
-
-def get_block_value(instrument_code, block_move_price):
-    daily_carry_price = get_raw_carry_data(instrument_code)
-    block_value = daily_carry_price.ffill() * block_move_price * 0.01
-    return block_value
 
 
 if __name__ == '__main__':

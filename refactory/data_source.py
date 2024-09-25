@@ -49,6 +49,13 @@ def get_raw_cost_data(instrument_code):
 
 
 def get_point_size(instrument_code):
-    instr_object = get_instrument_info(instrument_code)  # 基础品种信息
-    block_move_price = instr_object.meta_data.Pointsize
+    instrument = get_instrument_info(instrument_code)  # 基础品种信息
+    block_move_price = instrument.meta_data.Pointsize
     return block_move_price
+
+
+def get_block_value(instrument_code):
+    price = get_raw_carry_data(instrument_code)
+    point_size = get_point_size(instrument_code)
+    block_value = price.ffill() * 0.01 * point_size
+    return block_value

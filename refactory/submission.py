@@ -49,11 +49,12 @@ def get_forecast_scalar(raw_forecast, window=250000, min_period=500, target_abs_
     return scaling_factor
 
 
-def get_position_target(price, block_move_price, capital=1000000, risk_target=0.16):
+# FIXME 为何做了两次risk target？
+def get_position_target(price, point_size, capital=1000000, risk_target=0.16):
     ret_volatility = calculate_mixed_volatility(price.diff(), slow_vol_years=10)
     daily_risk_target = risk_target / (256 ** 0.5)
     daily_cash_vol_target = daily_risk_target * capital
-    position_target = daily_cash_vol_target / (ret_volatility * block_move_price)
+    position_target = daily_cash_vol_target / (ret_volatility * point_size)
     return position_target
 
 
@@ -68,12 +69,26 @@ def calculate_pnl(positions: pd.Series, prices: pd.Series):
     return returns
 
 
-def calculate_factor_pnl(forecast, price, capital, block_move_price, risk_target):
-    position_target = get_position_target(price, block_move_price, capital, risk_target)
+def calcuate_instrument_pnl(instrument, position):
+    price = get_daily_price(instrument)
+    point_size = get_point_size(instrument)
+    pnl_in_points = calculate_pnl(positions=position, prices=price)
+    pnl_in_ccy = pnl_in_points * point_size
+
+    fx = pd.Series(1.0, index=price.index)
+    fx_aligned = fx.reindex(pnl_in_ccy.index, method="ffill")
+    pnl = pnl_in_ccy * fx_aligned
+    
+    daily_pnl = pnl.resample("B").sum()
+    return daily_pnl
+
+
+def calculate_factor_pnl(forecast, price, capital, point_size, risk_target):
+    position_target = get_position_target(price, point_size, capital, risk_target)
     aligned_ave = position_target.reindex(forecast.index, method='ffill')
     position = forecast * aligned_ave
     pnl_in_points = calculate_pnl(positions=position, prices=price)
-    pnl = pnl_in_points * block_move_price
+    pnl = pnl_in_points * point_size
     daily_pnl = pnl.resample("B").sum()
     return daily_pnl
 
@@ -210,6 +225,7 @@ def process_instrument_pnl(instrument):
     final_forecast = combined_forecast.clip(20, -20)
     volatility_scalar = calculate_volatility_scalar(instrument)
     position_raw = volatility_scalar * final_forecast / 10.0
+    position_raw.fillna(0.0, inplace=True)
     position_buffered = apply_buffer(position_raw, volatility_scalar, 0.10)
 
     daily_pnl = calcuate_instrument_pnl(instrument, position_buffered)
@@ -239,38 +255,32 @@ def apply_buffer(position_raw, volatility_scalar, buffer_size):
     bottom_pos = (position_raw - buffer).round()
     position_raw = position_raw.round()
 
-    position_raw.fillna(0.0, inplace=True)
-    current_position = position_raw.values[0]
-    buffered_position_list = [current_position]
+    last = position_raw.values[0]
+    buffered_position_list = [last]
     for index in range(len(position_raw))[1:]:
-        current_position = apply_buffer_for_single_period(current_position, position_raw.values[index],
-                                                          top_pos.values[index], bottom_pos.values[index])
-        buffered_position_list.append(current_position)
+        last = adjust_by_buffer(last, position_raw.values[index],
+                                top_pos.values[index], bottom_pos.values[index])
+        buffered_position_list.append(last)
     buffered_position = pd.Series(buffered_position_list, index=position_raw.index)
+
+    # last = position_raw.shift(1).bfill()
+    # df = pd.DataFrame({'last': last, 'current': position_raw, 'top': top_pos, 'bottom': bottom_pos})
+    # buffered_position = df.apply(lambda x: adjust_by_buffer(x['last'], x['current'], x['top'], x['bottom']), axis=1)
+
     return buffered_position
 
 
-def apply_buffer_for_single_period(last, current, top, bottom, trade_to_edge=True):
-    if last > top:
-        result = top if trade_to_edge else current
-    elif last < bottom:
-        result = bottom if trade_to_edge else current
+def adjust_by_buffer(last, current, top, bottom, trade_to_edge=True):
+    result = last
+    if trade_to_edge:
+        if last > top:
+            result = top
+        elif last < bottom:
+            result = bottom
     else:
-        result = last
+        if last > top or last < bottom:
+            result = current
     return result
-
-
-def calcuate_instrument_pnl(instrument, position):
-    price = get_daily_price(instrument)
-    point_size = get_point_size(instrument)
-    fx = pd.Series(1.0, index=price.index)
-    pnl_in_points = calculate_pnl(positions=position, prices=price)
-    pnl_in_ccy = pnl_in_points * point_size
-    fx_aligned = fx.reindex(pnl_in_ccy.index, method="ffill")
-    pnl = pnl_in_ccy * fx_aligned
-    pnl.index = pd.to_datetime(pnl.index)
-    daily_pnl = pnl.resample("B").sum()
-    return daily_pnl
 
 
 if __name__ == '__main__':

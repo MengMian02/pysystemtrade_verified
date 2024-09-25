@@ -208,10 +208,11 @@ def process_instrument_pnl(instrument):
     fdm = calculate_forecast_diversify_multiplier(forecast_df, forecast_weights)
     combined_forecast = (forecast_weights * forecast_df).sum(axis=1) * fdm
     final_forecast = combined_forecast.clip(20, -20)
+    volatility_scalar = calculate_volatility_scalar(instrument)
+    position_raw = volatility_scalar * final_forecast / 10.0
+    position_buffered = apply_buffer(position_raw, volatility_scalar, 0.10)
 
-    buffered_position = apply_buffered_position(final_forecast, instrument)
-
-    daily_pnl = calcuate_instrument_pnl(instrument, buffered_position)
+    daily_pnl = calcuate_instrument_pnl(instrument, position_buffered)
 
     return daily_pnl
 
@@ -232,36 +233,31 @@ def main(my_config):
 ############################################################################################# 分割线
 
 
-def apply_buffered_position(forecast, instrument, buffer_size=0.10):
-    volatility_scalar = calculate_volatility_scalar(instrument)
-    volatility_scalar = volatility_scalar.reindex(forecast.index, method='ffill')
-    position_raw = volatility_scalar * forecast / 10.0
-
-    buffer = volatility_scalar * 1.0 * 1.0 * buffer_size  # 乘的是instr weight和idm, 目前为default 1
+def apply_buffer(position_raw, volatility_scalar, buffer_size):
+    buffer = volatility_scalar * buffer_size
     top_pos = (position_raw + buffer).round()
     bottom_pos = (position_raw - buffer).round()
     position_raw = position_raw.round()
 
+    position_raw.fillna(0.0, inplace=True)
     current_position = position_raw.values[0]
-    if np.isnan(current_position):
-        current_position = 0.0
     buffered_position_list = [current_position]
     for index in range(len(position_raw))[1:]:
         current_position = apply_buffer_for_single_period(current_position, position_raw.values[index],
                                                           top_pos.values[index], bottom_pos.values[index])
         buffered_position_list.append(current_position)
     buffered_position = pd.Series(buffered_position_list, index=position_raw.index)
-
     return buffered_position
 
 
-def apply_buffer_for_single_period(last_position, optimal_position, top_pos, bot_pos, trade_to_edge=True):
-    if last_position > top_pos:
-        return top_pos if trade_to_edge else optimal_position
-    elif last_position < bot_pos:
-        return bot_pos if trade_to_edge else optimal_position
+def apply_buffer_for_single_period(last, current, top, bottom, trade_to_edge=True):
+    if last > top:
+        result = top if trade_to_edge else current
+    elif last < bottom:
+        result = bottom if trade_to_edge else current
     else:
-        return last_position
+        result = last
+    return result
 
 
 def calcuate_instrument_pnl(instrument, position):

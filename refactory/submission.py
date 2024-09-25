@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 from copy import copy
 
-from refactory.data_source import get_daily_price, get_raw_carry_data, get_block_move_price
+from refactory.data_source import get_daily_price, get_raw_carry_data, get_point_size
 from refactory.utils import get_volatily, ewmac, calculate_mixed_volatility, get_corr_estimator_for_instrument_weight, \
     get_stdev_estimator_for_instrument_weight, get_mean_estimator, optimisation
 from sysdata.config.configdata import Config
@@ -83,8 +83,8 @@ def process_factors_pnl(instrument_code, capital=1000000, risk_target=0.16, targ
     forecast_df = calculate_forecasts(price)
     forecast_df = forecast_df / target_abs_forecast
 
-    block_move_price = get_block_move_price(instrument_code)
-    func_pnl = lambda forecast: calculate_factor_pnl(forecast, price, capital, block_move_price, risk_target)
+    point_size = get_point_size(instrument_code)
+    func_pnl = lambda forecast: calculate_factor_pnl(forecast, price, capital, point_size, risk_target)
     factor_pnl_df = forecast_df.apply(func_pnl, axis=0)
     factor_pnl_df[factor_pnl_df == 0.0] = np.nan
 
@@ -215,8 +215,8 @@ def main(my_config):
 
 
 def calculate_avg_position(instrument_code, capital=1000000, perc_vol_target=16):
-    block_move_price = get_block_move_price(instrument_code)
-    block_value = get_block_value(instrument_code, block_move_price)
+    point_size = get_point_size(instrument_code)
+    block_value = get_block_value(instrument_code, point_size)
 
     daily_carry_price = get_raw_carry_data(instrument_code)
     price = get_daily_price(instrument_code)
@@ -268,10 +268,10 @@ def apply_buffer_for_single_period(last_position, optimal_position, top_pos, bot
 
 def calcuate_instrument_pnl(instrument, position):
     price = get_daily_price(instrument)
-    block_move_price = get_block_move_price(instrument)
+    point_size = get_point_size(instrument)
     fx = pd.Series(1.0, index=price.index)
     pnl_in_points = calculate_pnl(positions=position, prices=price)
-    pnl_in_ccy = pnl_in_points * block_move_price
+    pnl_in_ccy = pnl_in_points * point_size
     fx_aligned = fx.reindex(pnl_in_ccy.index, method="ffill")
     pnl = pnl_in_ccy * fx_aligned
     pnl.index = pd.to_datetime(pnl.index)

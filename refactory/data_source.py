@@ -48,7 +48,7 @@ def get_raw_cost_data(instrument_code):
     return instrument_costs
 
 
-def get_block_move_price(instrument_code):
+def get_point_size(instrument_code):
     instr_object = get_instrument_info(instrument_code)  # 基础品种信息
     block_move_price = instr_object.meta_data.Pointsize
     return block_move_price

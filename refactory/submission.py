@@ -128,10 +128,7 @@ def process_instrument_pnl(instrument):
 
     start_date = returns.index[0]
     end_date = returns.index[-1]
-
-    start_dates_per_period = pd.date_range(end_date, start_date, freq='-365D').to_list()
-    start_dates_per_period.reverse()
-    end_list = start_dates_per_period[1:-1]
+    end_list = generate_end_list(start_date, end_date)
 
     weight_df = pd.DataFrame([calculate_forecast_weights(returns, end) for end in end_list], index=end_list)
     weight_df = weight_df.reindex(forecast_df.index, method='ffill')
@@ -176,6 +173,13 @@ def process_instrument_pnl(instrument):
     daily_pnl = calcuate_instrument_pnl(instrument, buffered_position)
 
     return daily_pnl
+
+
+def generate_end_list(start_date, end_date):
+    start_dates_per_period = pd.date_range(end_date, start_date, freq='-365D').to_list()
+    start_dates_per_period.reverse()
+    end_list = start_dates_per_period[1:-1]
+    return end_list
 
 
 def get_fdm(fit_end_list, forecast_weights, weekly_forecast):

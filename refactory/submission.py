@@ -140,22 +140,13 @@ def process_instrument_pnl(instrument):
 
     #######################################################
 
-    weekly_index = pd.date_range(start=forecast_df.index[0], end='2023-09-03', freq='W')  # 结束日期需要自行根据品种设定
-    weekly_forecast = forecast_df.reindex(weekly_index, method='ffill')
+    weekly_forecast = forecast_df.resample('W').last()
 
     date1 = weekly_forecast.index[0]
     date = weekly_forecast.index[-1]
-    # 根据数据起始和结束日期，生成各period的开始日期，且从后朝前看
-    period = list(pd.date_range(date, date1, freq='-' + '365D'))
-    period.reverse()
-    # Rolling 方法
-    fit_end_list = []
-    for periods_index in range(len(period))[1:-1]:
-        end1 = period[periods_index]  # 之前的fit end 是 period end, 所以就造成了fit 和 use 的一部分重叠
-        fit_end_list.append(end1)
-    # fit_end_list = end_list
+    fit_end_list = generate_end_list(date1, date)
 
-    forecast_weights.index = forecast_df.index
+    # forecast_weights.index = forecast_df.index
     forecast_weights = forecast_weights.rename(columns={0: 'ewmac32', 1: 'ewmac8'})
     fdm = get_fdm(fit_end_list, forecast_weights, weekly_forecast)
 

@@ -124,12 +124,11 @@ def process_instrument_pnl(instrument):
 
     instruments = my_config.instruments
     weekly_ret = [process_factors_pnl(it) for it in instruments]
-    returns = combine_instrument_pnl_df(weekly_ret)
 
+    returns = combine_instrument_pnl_df(weekly_ret)
     start_date = returns.index[0]
     end_date = returns.index[-1]
     end_list = generate_end_list(start_date, end_date)
-
     weight_df = pd.DataFrame([calculate_forecast_weights(returns, end) for end in end_list], index=end_list)
     weight_df = weight_df.reindex(forecast_df.index, method='ffill')
     weight_df = weight_df.fillna(1 / len(weight_df.columns))
@@ -141,7 +140,6 @@ def process_instrument_pnl(instrument):
     fdm = calculate_forecast_diversify_multiplier(forecast_df, forecast_weights)
     combined_forecast = (forecast_weights * forecast_df).sum(axis=1) * fdm
     capped_combined_forecast = combined_forecast.clip(20, -20)
-
     avg_position = calculate_avg_position(instrument)
 
     avg_position = avg_position.reindex(capped_combined_forecast.index, method='ffill')

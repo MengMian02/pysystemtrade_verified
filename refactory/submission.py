@@ -232,7 +232,6 @@ def process_factors_pnl(instrument_code, capital=1000000, risk_target=0.16, targ
 def process_instrument_pnl(instrument):
     price = get_daily_price(instrument)
     forecast_df = calculate_forecasts(price)
-    forecast_names = forecast_df.columns
 
     instruments = my_config.instruments
     weekly_ret = [process_factors_pnl(it) for it in instruments]
@@ -245,7 +244,7 @@ def process_instrument_pnl(instrument):
     weight_df = weight_df.reindex(forecast_df.index, method='ffill')
     weight_df = weight_df.fillna(1 / len(weight_df.columns))
     forecast_weights = weight_df.ewm(span=125).mean()
-    forecast_weights.columns = forecast_names
+    forecast_weights.columns = forecast_df.columns
     # forecast_weights.rename(columns={0: 'ewmac32', 1: 'ewmac8'}, inplace=True)
     # forecast_weights = forecast_weights[['ewmac8', 'ewmac32']]
 

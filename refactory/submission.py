@@ -159,19 +159,6 @@ def calculate_volatility_scalar(instrument_code, capital=1000000, annual_percent
     return volatility_scalar
 
 
-def calculate_forecast_weights(pnl_df, fit_end):
-    number = len(pnl_df.columns)
-    span = len(my_config.instruments) * 50000
-    min_periods_corr = len(my_config.instruments) * 10
-    min_periods = len(my_config.instruments) * 5
-    norm_stdev, norm_factor = get_stdev_estimator_for_instrument_weight(pnl_df, fit_end, span, min_periods)
-    mean_list = get_mean_estimator(pnl_df, fit_end, span, min_periods)
-    norm_mean = [a / b for a, b in zip(mean_list, norm_factor)]
-    corr = get_corr_estimator_for_instrument_weight(pnl_df, fit_end, span, min_periods_corr)
-    weight = optimisation(number, corr, norm_mean, norm_stdev)
-    return weight
-
-
 def apply_buffer(position_raw, volatility_scalar, buffer_size):
     buffer = volatility_scalar * buffer_size
     top_pos = (position_raw + buffer).round()
@@ -215,6 +202,7 @@ def calculate_instrument_pnl(instrument, position_buffered, price):
 
 ############################################################################################# 分割线
 
+
 def process_forecast_pnls(instrument_code, capital=1000000, risk_target=0.16, target_abs_forecast=10):
     price = get_daily_price(instrument_code)
     forecast_df = calculate_forecasts(price)
@@ -227,10 +215,20 @@ def process_forecast_pnls(instrument_code, capital=1000000, risk_target=0.16, ta
     return daily_forecast_pnls
 
 
-def process_instrument_pnl(instrument):
-    price = get_daily_price(instrument)
-    forecast_df = calculate_forecasts(price)
+def calculate_forecast_weights(pnl_df, fit_end):
+    number = len(pnl_df.columns)
+    span = len(my_config.instruments) * 50000
+    min_periods_corr = len(my_config.instruments) * 10
+    min_periods = len(my_config.instruments) * 5
+    norm_stdev, norm_factor = get_stdev_estimator_for_instrument_weight(pnl_df, fit_end, span, min_periods)
+    mean_list = get_mean_estimator(pnl_df, fit_end, span, min_periods)
+    norm_mean = [a / b for a, b in zip(mean_list, norm_factor)]
+    corr = get_corr_estimator_for_instrument_weight(pnl_df, fit_end, span, min_periods_corr)
+    weight = optimisation(number, corr, norm_mean, norm_stdev)
+    return weight
 
+
+def get_forecast_weights():
     instruments = my_config.instruments
     daily_forecast_pnls = [process_forecast_pnls(it) for it in instruments]
     weekly_forecast_pnls = [p.resample('W').sum() for p in daily_forecast_pnls]
@@ -239,12 +237,19 @@ def process_instrument_pnl(instrument):
     end_date = returns.index[-1]
     end_list = generate_end_list(start_date, end_date)
     weight_df = pd.DataFrame([calculate_forecast_weights(returns, end) for end in end_list], index=end_list)
-    weight_df = weight_df.reindex(forecast_df.index, method='ffill')
-    weight_df = weight_df.fillna(1 / len(weight_df.columns))
-    forecast_weights = weight_df.ewm(span=125).mean()
-    forecast_weights.columns = forecast_df.columns
-    # forecast_weights.rename(columns={0: 'ewmac32', 1: 'ewmac8'}, inplace=True)
-    # forecast_weights = forecast_weights[['ewmac8', 'ewmac32']]
+    weight_df.columns = returns.columns
+    return weight_df
+
+
+def process_instrument_pnl(instrument):
+    price = get_daily_price(instrument)
+    forecast_df = calculate_forecasts(price)
+
+    forecast_weights_full = get_forecast_weights()
+    forecast_weights = forecast_weights_full.reindex(forecast_df.index, method='ffill').fillna(
+        1 / len(forecast_weights_full.columns))
+    # TODO: 平滑为什么不放在全量weight里面做？
+    forecast_weights = forecast_weights.ewm(span=125).mean()
 
     fdm = calculate_forecast_diversify_multiplier(forecast_df, forecast_weights)
     combined_forecast = (forecast_weights * forecast_df).sum(axis=1) * fdm

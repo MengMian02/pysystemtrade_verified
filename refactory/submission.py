@@ -215,18 +215,16 @@ def calculate_instrument_pnl(instrument, position_buffered, price):
 
 ############################################################################################# 分割线
 
-def process_factors_pnl(instrument_code, capital=1000000, risk_target=0.16, target_abs_forecast=10):
+def process_forecast_pnls(instrument_code, capital=1000000, risk_target=0.16, target_abs_forecast=10):
     price = get_daily_price(instrument_code)
     forecast_df = calculate_forecasts(price)
     forecast_df = forecast_df / target_abs_forecast
 
     point_size = get_point_size(instrument_code)
     func_pnl = lambda forecast: calculate_factor_pnl(forecast, price, capital, point_size, risk_target)
-    factor_pnl_df = forecast_df.apply(func_pnl, axis=0)
-    factor_pnl_df[factor_pnl_df == 0.0] = np.nan
-
-    weekly_pnl_df = factor_pnl_df.resample('W').sum()
-    return weekly_pnl_df
+    daily_forecast_pnls = forecast_df.apply(func_pnl, axis=0)
+    daily_forecast_pnls[daily_forecast_pnls == 0.0] = np.nan
+    return daily_forecast_pnls
 
 
 def process_instrument_pnl(instrument):
@@ -234,9 +232,9 @@ def process_instrument_pnl(instrument):
     forecast_df = calculate_forecasts(price)
 
     instruments = my_config.instruments
-    weekly_ret = [process_factors_pnl(it) for it in instruments]
-
-    returns = combine_instrument_pnl_df(weekly_ret)
+    daily_forecast_pnls = [process_forecast_pnls(it) for it in instruments]
+    weekly_forecast_pnls = [p.resample('W').sum() for p in daily_forecast_pnls]
+    returns = combine_instrument_pnl_df(weekly_forecast_pnls)
     start_date = returns.index[0]
     end_date = returns.index[-1]
     end_list = generate_end_list(start_date, end_date)

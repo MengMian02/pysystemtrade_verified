@@ -88,6 +88,18 @@ def calculate_factor_pnl(forecast, price, capital, point_size, risk_target):
 def SR_cost_as_annualised_figure():
 
     pass
+def forecast_turnover_for_individual_instrument(instrument_code, rule_name):
+    forecast = get_capped_forecast(instrument_code, rule_name)
+
+    average_forecast_for_turnover = 10.0
+    y = average_forecast_for_turnover
+    daily_forecast = forecast.resample("1B").last()
+    daily_y = pd.Series(np.full(daily_forecast.shape[0], float(y)), daily_forecast.index)
+    x_normalised_for_y = daily_forecast / daily_y.ffill()
+    avg_daily = float(x_normalised_for_y.diff().abs().mean())
+    annual_turnover_for_forecast = avg_daily * 256
+    return annual_turnover_for_forecast
+
 
 def get_SR_cost_for_instrument_forecast(instrument_code, rule_name):
     block_price_multiplier = get_point_size(instrument_code)  # 指源代码中 get_value_of_block_price_move 返回的是point_size
@@ -98,25 +110,38 @@ def get_SR_cost_for_instrument_forecast(instrument_code, rule_name):
     start_date = last_date - pd.DateOffset(years=1)
     average_price = float(price[start_date:].mean())
 
-    daily_vol = calculate_mixed_volatility(instrument_code)  #TODO: 后续看是否完全复用
+    price_returns = price.diff()
+    daily_vol = calculate_mixed_volatility(price_returns, slow_vol_years=10)  #TODO: 后续看是否完全复用
     average_vol = float(daily_vol[start_date:].mean())
     ann_stdev_price_units = average_vol * 16
 
     # Transaction cost
-    pooled_instruments = my_config.instruments
-    turnovers = [
-        _forecast_turnover_for_individual_instrument(
-            instrument_code, rule_name
-        )
-        for instrument_code in pooled_instruments
-    ]
-
-    weights = _get_forecast_length_weighting_for_list_of_instruments(
-        instrument_code, rule_name
-    )
-    turnover = calculate_weighted_average_with_nans(weights, turnovers)
-
-
+    # pooled_instruments = my_config.instruments
+    # turnovers = [
+    #     forecast_turnover_for_individual_instrument(
+    #         instrument_code, rule_name
+    #     )
+    #     for instrument_code in pooled_instruments
+    # ]
+    #
+    # forecast_lengths = [
+    #     _get_forecast_length_for_instrument_rule(
+    #         instrument_code, rule_name
+    #     )
+    #     for instrument_code in pooled_instruments
+    # ]
+    # total_length = float(sum(forecast_lengths))
+    # weights = [
+    #     forecast_length / total_length for forecast_length in forecast_lengths
+    # ]
+    #
+    # turnover = calculate_weighted_average_with_nans(weights, turnovers)
+    #
+    from systems.accounts.account_costs import accountCosts
+    instance = accountCosts()
+    # transaction_cost = instance.get_SR_transaction_cost_for_instrument_forecast(
+    #     instrument_code=instrument_code, rule_variation_name=rule_name
+    # )
     value_per_block = average_price * block_price_multiplier
     price_slippage = get_spread_cost(instrument_code)  # TODO: 验证spread_cost和price_slippage是不是一个事情
     slippage = abs(notional_blocks_traded) * price_slippage * block_price_multiplier
@@ -131,16 +156,16 @@ def get_SR_cost_for_instrument_forecast(instrument_code, rule_name):
 
     ann_stdev_instrument_currency = ann_stdev_price_units * block_price_multiplier
     cost_per_trade = cost_instrument_currency / ann_stdev_instrument_currency
-    transaction_cost = turnover * cost_per_trade
+    # transaction_cost = turnover * cost_per_trade
 
     # holding cost
     roll_parameters = get_roll_parameters(instrument_code)
     hold_turnovers = roll_parameters.rolls_per_year_in_hold_cycle() * 2.0
-    holding_cost = hold_turnovers * cost_per_trade
+    holding_cost = hold_turnovers * cost_per_trade  # Holding cost is verified
 
-
-    return transaction_cost + holding_cost
-
+    # trading_cost = transaction_cost + holding_cost
+    # return trading_cost
+SR_COST = get_SR_cost_for_instrument_forecast('US10', 'ewmac32')
 # 先算turnover
 # 再算SR cost
 from systems.accounts.account_costs import accountCosts

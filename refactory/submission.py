@@ -85,9 +85,19 @@ def calculate_factor_pnl(forecast, price, capital, point_size, risk_target):
     return daily_pnl
 
 
-def SR_cost_as_annualised_figure():
+def get_capped_forecast(instrument_code, rule_name):
+    price = get_daily_price(instrument_code)
+    if rule_name == 'ewmac32':
+        raw_ewmac32 = ewmac(price, 32, 128, 1)
+        ewmac32 = final_forecast('ewmac32', raw_ewmac32, price, 20)
+        return ewmac32
+    if rule_name == 'ewmac8':
+        raw_ewmac8 = ewmac(price, 8, 32, 1)
+        ewmac8 = final_forecast('ewmac8', raw_ewmac8, price, 20)
+        return ewmac8
+    else:
+        raise 'Rule not defined '
 
-    pass
 def forecast_turnover_for_individual_instrument(instrument_code, rule_name):
     forecast = get_capped_forecast(instrument_code, rule_name)
 
@@ -102,10 +112,16 @@ def forecast_turnover_for_individual_instrument(instrument_code, rule_name):
 
 
 def get_SR_cost_for_instrument_forecast(instrument_code, rule_name):
-    transaction_cost = 0
+    turnover = forecast_turnover_for_individual_instrument(instrument_code, rule_name)
+
+    # holding costs calculated elsewhere
+    # transaction_cost = self.get_SR_trading_cost_only_given_turnover(
+    #     instrument_code, turnover
+    # )
+
+
 
     cost_per_trade = get_cost_per_trade(instrument_code)
-
     # holding cost
     roll_parameters = get_roll_parameters(instrument_code)
     hold_turnovers = roll_parameters.rolls_per_year_in_hold_cycle() * 2.0

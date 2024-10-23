@@ -102,6 +102,20 @@ def forecast_turnover_for_individual_instrument(instrument_code, rule_name):
 
 
 def get_SR_cost_for_instrument_forecast(instrument_code, rule_name):
+    transaction_cost = 0
+
+    cost_per_trade = get_cost_per_trade(instrument_code)
+
+    # holding cost
+    roll_parameters = get_roll_parameters(instrument_code)
+    hold_turnovers = roll_parameters.rolls_per_year_in_hold_cycle() * 2.0
+    holding_cost = hold_turnovers * cost_per_trade  # Holding cost is verified
+
+    trading_cost = transaction_cost + holding_cost
+    return trading_cost
+
+
+def get_cost_per_trade(instrument_code):
     block_price_multiplier = get_point_size(instrument_code)  # 指源代码中 get_value_of_block_price_move 返回的是point_size
     notional_blocks_traded = 1
     price = get_daily_price(instrument_code)  # FIXME: 又重复get了一次价格， 虽然源代码也是这么写的
@@ -109,62 +123,24 @@ def get_SR_cost_for_instrument_forecast(instrument_code, rule_name):
     # FIXME: 在这里作者使用了pd.DateOffset来进行年份计算，而在rolling window中是用365天，原因存疑
     start_date = last_date - pd.DateOffset(years=1)
     average_price = float(price[start_date:].mean())
-
     price_returns = price.diff()
-    daily_vol = calculate_mixed_volatility(price_returns, slow_vol_years=10)  #TODO: 后续看是否完全复用
+    daily_vol = calculate_mixed_volatility(price_returns, slow_vol_years=10)  # TODO: 后续看是否完全复用
     average_vol = float(daily_vol[start_date:].mean())
     ann_stdev_price_units = average_vol * 16
-
-    # Transaction cost
-    # pooled_instruments = my_config.instruments
-    # turnovers = [
-    #     forecast_turnover_for_individual_instrument(
-    #         instrument_code, rule_name
-    #     )
-    #     for instrument_code in pooled_instruments
-    # ]
-    #
-    # forecast_lengths = [
-    #     _get_forecast_length_for_instrument_rule(
-    #         instrument_code, rule_name
-    #     )
-    #     for instrument_code in pooled_instruments
-    # ]
-    # total_length = float(sum(forecast_lengths))
-    # weights = [
-    #     forecast_length / total_length for forecast_length in forecast_lengths
-    # ]
-    #
-    # turnover = calculate_weighted_average_with_nans(weights, turnovers)
-    #
-    from systems.accounts.account_costs import accountCosts
-    instance = accountCosts()
-    # transaction_cost = instance.get_SR_transaction_cost_for_instrument_forecast(
-    #     instrument_code=instrument_code, rule_variation_name=rule_name
-    # )
     value_per_block = average_price * block_price_multiplier
     price_slippage = get_spread_cost(instrument_code)  # TODO: 验证spread_cost和price_slippage是不是一个事情
     slippage = abs(notional_blocks_traded) * price_slippage * block_price_multiplier
-
     per_trade_commission = get_instrument_info(instrument_code).meta_data.PerTrade
     per_block_commission = notional_blocks_traded * get_instrument_info(instrument_code).meta_data.PerBlock
     percentage_commission = (notional_blocks_traded * value_per_block
                              * get_instrument_info(instrument_code).meta_data.Percentage)
     commission = max([per_trade_commission, per_block_commission, percentage_commission])
-
     cost_instrument_currency = commission + slippage
-
     ann_stdev_instrument_currency = ann_stdev_price_units * block_price_multiplier
     cost_per_trade = cost_instrument_currency / ann_stdev_instrument_currency
-    # transaction_cost = turnover * cost_per_trade
+    return cost_per_trade
 
-    # holding cost
-    roll_parameters = get_roll_parameters(instrument_code)
-    hold_turnovers = roll_parameters.rolls_per_year_in_hold_cycle() * 2.0
-    holding_cost = hold_turnovers * cost_per_trade  # Holding cost is verified
 
-    # trading_cost = transaction_cost + holding_cost
-    # return trading_cost
 SR_COST = get_SR_cost_for_instrument_forecast('US10', 'ewmac32')
 # 先算turnover
 # 再算SR cost

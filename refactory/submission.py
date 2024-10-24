@@ -5,7 +5,7 @@ from copy import copy
 from refactory.data_source import get_daily_price, get_raw_carry_data, get_point_size, get_block_value, \
     get_roll_parameters, get_raw_cost_data, get_spread_cost, get_instrument_info
 from refactory.utils import get_volatily, ewmac, calculate_mixed_volatility, get_corr_estimator_for_instrument_weight, \
-    get_stdev_estimator_for_instrument_weight, get_mean_estimator, optimisation
+    get_stdev_estimator_for_instrument_weight, get_mean_estimator, optimisation, calculate_weighted_average_with_nans
 from sysdata.config.configdata import Config
 
 my_config = Config()
@@ -66,7 +66,7 @@ def calculate_pnl(positions: pd.Series, prices: pd.Series):
     if len(both_series.columns) == 2:
         both_series.columns = ["positions", "prices"]
     both_series = both_series.ffill()
-    price_returns = both_series.price.diff()
+    price_returns = both_series.prices.diff()
     # 源代码在这里计算的时候是shift(1), 可经过对比，发现Position series 事先已经经历过一次shift(1), 所以一共shift(2)
     # FIXME: 解释为什么出现了shift(2)
     adjusted_both_series = both_series.loc[:, both_series.columns != 'price'].shift(2)
@@ -112,16 +112,23 @@ def forecast_turnover_for_individual_instrument(instrument_code, rule_name):
 
 
 def get_SR_cost_for_instrument_forecast(instrument_code, rule_name):
-    turnover = forecast_turnover_for_individual_instrument(instrument_code, rule_name)
+    pooled_instruments = my_config.instruments
+
+    turnovers = [forecast_turnover_for_individual_instrument(instrument_code, rule_name)
+                 for instrument_code in pooled_instruments]
+
+    forecast_lengths = [len(get_capped_forecast(instrument_code, rule_name))
+                        for instrument_code in pooled_instruments]
+    total_length = float(sum(forecast_lengths))
+    weights = [forecast_length / total_length for forecast_length in forecast_lengths]
+
+    avg_turnover = calculate_weighted_average_with_nans(weights, turnovers)
+
 
     # holding costs calculated elsewhere
-    # transaction_cost = self.get_SR_trading_cost_only_given_turnover(
-    #     instrument_code, turnover
-    # )
-
-
 
     cost_per_trade = get_cost_per_trade(instrument_code)
+    transaction_cost = cost_per_trade * avg_turnover
     # holding cost
     roll_parameters = get_roll_parameters(instrument_code)
     hold_turnovers = roll_parameters.rolls_per_year_in_hold_cycle() * 2.0

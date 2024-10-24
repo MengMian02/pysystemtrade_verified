@@ -3,9 +3,10 @@ import pandas as pd
 from copy import copy
 
 from refactory.data_source import get_daily_price, get_raw_carry_data, get_point_size, get_block_value, \
-    get_roll_parameters, get_raw_cost_data, get_spread_cost, get_instrument_info
+    get_roll_parameters
 from refactory.utils import get_volatily, ewmac, calculate_mixed_volatility, get_corr_estimator_for_instrument_weight, \
-    get_stdev_estimator_for_instrument_weight, get_mean_estimator, optimisation, calculate_weighted_average_with_nans
+    get_stdev_estimator_for_instrument_weight, get_mean_estimator, optimisation, calculate_weighted_average_with_nans, \
+    get_cost_per_trade, robust_vol_calc
 from sysdata.config.configdata import Config
 
 my_config = Config()
@@ -66,7 +67,7 @@ def calculate_pnl(positions: pd.Series, prices: pd.Series):
     if len(both_series.columns) == 2:
         both_series.columns = ["positions", "prices"]
     both_series = both_series.ffill()
-    price_returns = both_series.prices.diff()
+    price_returns = both_series.price.diff()
     # 源代码在这里计算的时候是shift(1), 可经过对比，发现Position series 事先已经经历过一次shift(1), 所以一共shift(2)
     # FIXME: 解释为什么出现了shift(2)
     adjusted_both_series = both_series.loc[:, both_series.columns != 'price'].shift(2)
@@ -75,14 +76,43 @@ def calculate_pnl(positions: pd.Series, prices: pd.Series):
     return returns
 
 
-def calculate_factor_pnl(forecast, price, capital, point_size, risk_target):
+def calculate_factor_pnl(forecast, price, capital, point_size, risk_target, sr_cost):
     position_target = get_position_target(price, point_size, capital, risk_target)
     aligned_ave = position_target.reindex(forecast.index, method='ffill')  # average_notional_position CORN 没问题
     position = forecast.mul(aligned_ave, axis=0) / 10  # notional_position CORN 没问题
     pnl_in_points = calculate_pnl(positions=position, prices=price)
     pnl = pnl_in_points * point_size  # pnl 对CORN 经过shift(2) 后没问题
-    daily_pnl = pnl.resample("B").sum()
-    return daily_pnl
+    daily_pnl_gross = pnl.resample("B").sum()
+
+    sr_cost_with_minus_sign = -sr_cost
+
+    average_position = aligned_ave
+    annualised_price_vol_points = robust_vol_calc(price) * 16
+    average_position_aligned_to_vol = average_position.reindex(
+        annualised_price_vol_points.index, method="ffill")
+    annualised_price_vol_points_for_an_average_position = average_position_aligned_to_vol * annualised_price_vol_points
+
+    sr_cost_as_annualised_figure = sr_cost_with_minus_sign * annualised_price_vol_points_for_an_average_position
+
+
+    position_ffill = position.ffill()
+    SR_cost_aligned_positions = sr_cost_as_annualised_figure.reindex(
+        position_ffill.index, method="ffill")
+    SR_cost_aligned_positions_backfilled = SR_cost_aligned_positions.bfill()
+    # Don't include costs until we start trading
+    SR_cost_aligned_positions_when_position_held = SR_cost_aligned_positions_backfilled[
+        ~position_ffill.isna()]
+    # Actually output in price space to match gross returns
+    sr_cost_aligned_to_price = SR_cost_aligned_positions_when_position_held.reindex(
+        price.index, method="ffill")
+    # These will be annualised figure, make it a small loss every day
+    period_intervals_in_seconds = sr_cost_aligned_to_price.index.to_series().diff().dt.total_seconds()
+    period_intervals_in_year_fractions = period_intervals_in_seconds / (365.25*24*60)
+    costs_in_points = sr_cost_aligned_to_price * period_intervals_in_year_fractions
+    costs = costs_in_points * point_size  # 后续有个fx 的序列，但目前不加
+    daily_pnl_net = daily_pnl_gross.add(costs, fill_value=0)
+
+    return daily_pnl_net
 
 
 def get_capped_forecast(instrument_code, rule_name):
@@ -113,70 +143,35 @@ def forecast_turnover_for_individual_instrument(instrument_code, rule_name):
 
 def get_SR_cost_for_instrument_forecast(instrument_code, rule_name):
     pooled_instruments = my_config.instruments
+    cost_per_trade = get_cost_per_trade(instrument_code)
 
+    # transaction cost
     turnovers = [forecast_turnover_for_individual_instrument(instrument_code, rule_name)
                  for instrument_code in pooled_instruments]
-
     forecast_lengths = [len(get_capped_forecast(instrument_code, rule_name))
                         for instrument_code in pooled_instruments]
     total_length = float(sum(forecast_lengths))
     weights = [forecast_length / total_length for forecast_length in forecast_lengths]
-
     avg_turnover = calculate_weighted_average_with_nans(weights, turnovers)
-
-
-    # holding costs calculated elsewhere
-
-    cost_per_trade = get_cost_per_trade(instrument_code)
     transaction_cost = cost_per_trade * avg_turnover
+
     # holding cost
     roll_parameters = get_roll_parameters(instrument_code)
     hold_turnovers = roll_parameters.rolls_per_year_in_hold_cycle() * 2.0
-    holding_cost = hold_turnovers * cost_per_trade  # Holding cost is verified
+    holding_cost = hold_turnovers * cost_per_trade
 
     trading_cost = transaction_cost + holding_cost
     return trading_cost
 
 
-def get_cost_per_trade(instrument_code):
-    block_price_multiplier = get_point_size(instrument_code)  # 指源代码中 get_value_of_block_price_move 返回的是point_size
-    notional_blocks_traded = 1
-    price = get_daily_price(instrument_code)  # FIXME: 又重复get了一次价格， 虽然源代码也是这么写的
-    last_date = price.index[-1]
-    # FIXME: 在这里作者使用了pd.DateOffset来进行年份计算，而在rolling window中是用365天，原因存疑
-    start_date = last_date - pd.DateOffset(years=1)
-    average_price = float(price[start_date:].mean())
-    price_returns = price.diff()
-    daily_vol = calculate_mixed_volatility(price_returns, slow_vol_years=10)  # TODO: 后续看是否完全复用
-    average_vol = float(daily_vol[start_date:].mean())
-    ann_stdev_price_units = average_vol * 16
-    value_per_block = average_price * block_price_multiplier
-    price_slippage = get_spread_cost(instrument_code)  # TODO: 验证spread_cost和price_slippage是不是一个事情
-    slippage = abs(notional_blocks_traded) * price_slippage * block_price_multiplier
-    per_trade_commission = get_instrument_info(instrument_code).meta_data.PerTrade
-    per_block_commission = notional_blocks_traded * get_instrument_info(instrument_code).meta_data.PerBlock
-    percentage_commission = (notional_blocks_traded * value_per_block
-                             * get_instrument_info(instrument_code).meta_data.Percentage)
-    commission = max([per_trade_commission, per_block_commission, percentage_commission])
-    cost_instrument_currency = commission + slippage
-    ann_stdev_instrument_currency = ann_stdev_price_units * block_price_multiplier
-    cost_per_trade = cost_instrument_currency / ann_stdev_instrument_currency
-    return cost_per_trade
-
-
-SR_COST = get_SR_cost_for_instrument_forecast('US10', 'ewmac32')
-# 先算turnover
-# 再算SR cost
-from systems.accounts.account_costs import accountCosts
-accountCosts = accountCosts()
-# sr_cost = accountCosts._get_SR_transaction_cost_of_rule_for_individual_instrument("CORN", 'ewmac8')
+sr_cost = get_SR_cost_for_instrument_forecast('CORN', 'ewmac32')
 
 price = get_daily_price("CORN")
 forecast = calculate_forecasts(price)
 capital = 1000000
 point_size = get_point_size("CORN")
 risk_target = 0.16
-daily_pnl = calculate_factor_pnl(forecast, price, capital, point_size, risk_target)
+daily_pnl = calculate_factor_pnl(forecast, price, capital, point_size, risk_target, sr_cost)
 print('end')
 def generate_end_list(start_date, end_date):
     start_dates_per_period = pd.date_range(end_date, start_date, freq='-365D').to_list()

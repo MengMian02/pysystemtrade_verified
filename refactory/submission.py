@@ -320,7 +320,20 @@ def calculate_instrument_pnl(instrument, position_buffered, price):
 
 ############################################################################################# 分割线
 
+def get_turnover_for_list_of_rules(instrument_list, trading_rule_list):
 
+    turnover_dict = dict()
+    for rule_name in trading_rule_list:
+        turnover_as_list = [forecast_turnover_for_individual_instrument(instrument, rule_name) for instrument in instrument_list]
+        turnover_as_dict = dict(
+            [
+                (instrument_code, turnover)
+                for (instrument_code, turnover) in zip(instrument_list, turnover_as_list)
+            ]
+        )
+        turnover_dict[rule_name] = turnover_as_dict
+
+    return turnover_dict
 
 
 def process_instrument_pnl(instrument):
@@ -328,9 +341,12 @@ def process_instrument_pnl(instrument):
     forecast_df = calculate_forecasts(price)
 
     instruments = my_config.instruments
+    trading_rule_list = ['ewmac32', 'ewmac8']
+    turnovers = get_turnover_for_list_of_rules(instruments, trading_rule_list)
     daily_forecast_pnls = [process_forecast_pnls(it) for it in instruments]
     weekly_forecast_pnls = [p.resample('W').sum() for p in daily_forecast_pnls]
     returns = combine_instrument_pnl_df(weekly_forecast_pnls)
+
 
     start_date = returns.index[0]
     end_date = returns.index[-1]

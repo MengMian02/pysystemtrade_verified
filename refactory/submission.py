@@ -87,10 +87,10 @@ def calculate_factor_pnl(forecast, price, capital, point_size, risk_target, sr_c
     sr_cost_with_minus_sign = -sr_cost
 
     average_position = aligned_ave
-    annualised_price_vol_points = robust_vol_calc(price) * 16
+    annualised_price_vol_points = calculate_mixed_volatility(price.diff(), slow_vol_years=10)  #FIXME: ERROR
     average_position_aligned_to_vol = average_position.reindex(
         annualised_price_vol_points.index, method="ffill")
-    annualised_price_vol_points_for_an_average_position = average_position_aligned_to_vol * annualised_price_vol_points
+    annualised_price_vol_points_for_an_average_position = average_position_aligned_to_vol * annualised_price_vol_points * 16
 
     sr_cost_as_annualised_figure = sr_cost_with_minus_sign * annualised_price_vol_points_for_an_average_position
 

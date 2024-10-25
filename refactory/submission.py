@@ -65,7 +65,7 @@ def calculate_pnl(positions: pd.Series, prices: pd.Series):
     pos_series = positions.groupby(positions.index).last()
     both_series = pd.concat([pos_series, prices], axis=1)
     if len(both_series.columns) == 2:
-        both_series.columns = ["positions", "prices"]
+        both_series.columns = ["positions", "price"]
     both_series = both_series.ffill()
     price_returns = both_series.price.diff()
     # 源代码在这里计算的时候是shift(1), 可经过对比，发现Position series 事先已经经历过一次shift(1), 所以一共shift(2)
@@ -167,8 +167,8 @@ def get_SR_cost_for_instrument_forecast(instrument_code, rule_name):
 sr_cost = get_SR_cost_for_instrument_forecast('CORN', 'ewmac32')
 
 price = get_daily_price("CORN")
-# forecast = get_capped_forecast("CORN", 'ewmac32')
-forecast = calculate_forecasts(price)
+forecast = get_capped_forecast("CORN", 'ewmac32')
+# forecast = calculate_forecasts(price)
 capital = 1000000
 point_size = get_point_size("CORN")
 risk_target = 0.16

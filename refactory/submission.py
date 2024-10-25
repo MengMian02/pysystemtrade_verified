@@ -83,6 +83,7 @@ def calculate_factor_pnl(forecast, price, capital, point_size, risk_target, sr_c
     pnl_in_points = calculate_pnl(positions=position, prices=price)
     pnl = pnl_in_points * point_size  # pnl 对CORN 经过shift(2) 后没问题
     daily_pnl_gross = pnl.resample("B").sum()
+    daily_pnl_gross_series = daily_pnl_gross.iloc[:, 0]
 
     sr_cost_with_minus_sign = -sr_cost
 
@@ -107,10 +108,10 @@ def calculate_factor_pnl(forecast, price, capital, point_size, risk_target, sr_c
         price.index, method="ffill")
     # These will be annualised figure, make it a small loss every day
     period_intervals_in_seconds = sr_cost_aligned_to_price.index.to_series().diff().dt.total_seconds()
-    period_intervals_in_year_fractions = period_intervals_in_seconds / (365.25*24*60)
+    period_intervals_in_year_fractions = period_intervals_in_seconds / (365.25*24*60*60)
     costs_in_points = sr_cost_aligned_to_price * period_intervals_in_year_fractions
     costs = costs_in_points * point_size  # 后续有个fx 的序列，但目前不加
-    daily_pnl_net = daily_pnl_gross.add(costs, fill_value=0)
+    daily_pnl_net = daily_pnl_gross_series.add(costs, fill_value=0)
 
     return daily_pnl_net
 

@@ -78,42 +78,38 @@ def calculate_pnl(positions: pd.Series, prices: pd.Series):
 
 def calculate_factor_pnl(forecast, price, capital, point_size, risk_target, sr_cost):
     position_target = get_position_target(price, point_size, capital, risk_target)
-    aligned_ave = position_target.reindex(forecast.index, method='ffill')  # average_notional_position CORN 没问题
-    position = forecast.mul(aligned_ave, axis=0) / 10  # notional_position CORN 没问题
+    aligned_ave = position_target.reindex(forecast.index, method='ffill')
+    position = forecast.mul(aligned_ave, axis=0) / 10
     pnl_in_points = calculate_pnl(positions=position, prices=price)
-    pnl = pnl_in_points * point_size  # pnl 对CORN 经过shift(2) 后没问题
+    pnl = pnl_in_points * point_size
     daily_pnl_gross = pnl.resample("B").sum()
     daily_pnl_gross_series = daily_pnl_gross.iloc[:, 0]
 
-    sr_cost_with_minus_sign = -sr_cost
-
-    average_position = aligned_ave
-    annualised_price_vol_points = calculate_mixed_volatility(price.diff(), slow_vol_years=10)  #FIXME: ERROR
-    average_position_aligned_to_vol = average_position.reindex(
-        annualised_price_vol_points.index, method="ffill")
-    annualised_price_vol_points_for_an_average_position = average_position_aligned_to_vol * annualised_price_vol_points * 16
-
-    sr_cost_as_annualised_figure = sr_cost_with_minus_sign * annualised_price_vol_points_for_an_average_position
-
-
-    position_ffill = position.ffill()
-    SR_cost_aligned_positions = sr_cost_as_annualised_figure.reindex(
-        position_ffill.index, method="ffill")
-    SR_cost_aligned_positions_backfilled = SR_cost_aligned_positions.bfill()
-    # Don't include costs until we start trading
-    SR_cost_aligned_positions_when_position_held = SR_cost_aligned_positions_backfilled[
-        ~position_ffill.isna()]
+    annualised_price_vol_points = calculate_mixed_volatility(price.diff(), slow_vol_years=10)
+    # 原代码对于aligned_ave有个对其且ffill 操作，为简便已删除
+    # 源代码对于position 和sr_cost_annualised_figure有个ffill操作，已删除
+    # 源代码有个去除SR_cost_aligned_positions_backfilled.isna()操作，已删除
+    # 源代码有个对sr_cost_as_annualised_figure有个reindex到price.index 和ffill 操作，已删除
     # Actually output in price space to match gross returns
-    sr_cost_aligned_to_price = SR_cost_aligned_positions_when_position_held.reindex(
-        price.index, method="ffill")
     # These will be annualised figure, make it a small loss every day
-    period_intervals_in_seconds = sr_cost_aligned_to_price.index.to_series().diff().dt.total_seconds()
-    period_intervals_in_year_fractions = period_intervals_in_seconds / (365.25*24*60*60)
-    costs_in_points = sr_cost_aligned_to_price * period_intervals_in_year_fractions
+    sr_cost_as_annualised_figure = (-sr_cost * aligned_ave * annualised_price_vol_points * 16).bfill()
+    period_intervals_in_seconds = sr_cost_as_annualised_figure.index.to_series().diff().dt.total_seconds()
+    costs_in_points = sr_cost_as_annualised_figure * period_intervals_in_seconds / (365.25 * 24 * 60 * 60)
     costs = costs_in_points * point_size  # 后续有个fx 的序列，但目前不加
     daily_pnl_net = daily_pnl_gross_series.add(costs, fill_value=0)
 
     return daily_pnl_net
+
+def process_forecast_pnls(instrument_code, capital=1000000, risk_target=0.16, target_abs_forecast=10):
+    price = get_daily_price(instrument_code)
+    forecast_df = calculate_forecasts(price)
+    forecast_df = forecast_df / target_abs_forecast
+
+    point_size = get_point_size(instrument_code)
+    func_pnl = lambda forecast: calculate_factor_pnl(forecast, price, capital, point_size, risk_target)  # FIXME: sr_cost unfilled
+    daily_forecast_pnls = forecast_df.apply(func_pnl, axis=0)
+    daily_forecast_pnls[daily_forecast_pnls == 0.0] = np.nan
+    return daily_forecast_pnls
 
 
 def get_capped_forecast(instrument_code, rule_name):
@@ -174,6 +170,7 @@ capital = 1000000
 point_size = get_point_size("CORN")
 risk_target = 0.16
 daily_pnl = calculate_factor_pnl(forecast, price, capital, point_size, risk_target, sr_cost)
+
 print('end')
 def generate_end_list(start_date, end_date):
     start_dates_per_period = pd.date_range(end_date, start_date, freq='-365D').to_list()
@@ -312,16 +309,7 @@ def calculate_instrument_pnl(instrument, position_buffered, price):
 
 ############################################################################################# 分割线
 
-def process_forecast_pnls(instrument_code, capital=1000000, risk_target=0.16, target_abs_forecast=10):
-    price = get_daily_price(instrument_code)
-    forecast_df = calculate_forecasts(price)
-    forecast_df = forecast_df / target_abs_forecast
 
-    point_size = get_point_size(instrument_code)
-    func_pnl = lambda forecast: calculate_factor_pnl(forecast, price, capital, point_size, risk_target)
-    daily_forecast_pnls = forecast_df.apply(func_pnl, axis=0)
-    daily_forecast_pnls[daily_forecast_pnls == 0.0] = np.nan
-    return daily_forecast_pnls
 
 
 def process_instrument_pnl(instrument):

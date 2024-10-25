@@ -167,6 +167,7 @@ def get_SR_cost_for_instrument_forecast(instrument_code, rule_name):
 sr_cost = get_SR_cost_for_instrument_forecast('CORN', 'ewmac32')
 
 price = get_daily_price("CORN")
+# forecast = get_capped_forecast("CORN", 'ewmac32')
 forecast = calculate_forecasts(price)
 capital = 1000000
 point_size = get_point_size("CORN")

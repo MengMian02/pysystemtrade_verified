@@ -331,6 +331,7 @@ def process_instrument_pnl(instrument):
     daily_forecast_pnls = [process_forecast_pnls(it) for it in instruments]
     weekly_forecast_pnls = [p.resample('W').sum() for p in daily_forecast_pnls]
     returns = combine_instrument_pnl_df(weekly_forecast_pnls)
+
     start_date = returns.index[0]
     end_date = returns.index[-1]
     end_list = generate_end_list(start_date, end_date)

@@ -86,6 +86,7 @@ def calculate_factor_pnl(forecast, price, capital, point_size, risk_target, sr_c
     daily_pnl_gross_series = daily_pnl_gross.iloc[:, 0]
 
     annualised_price_vol_points = calculate_mixed_volatility(price.diff(), slow_vol_years=10)
+
     # 原代码对于aligned_ave有个对其且ffill 操作，为简便已删除
     # 源代码对于position 和sr_cost_annualised_figure有个ffill操作，已删除
     # 源代码有个去除SR_cost_aligned_positions_backfilled.isna()操作，已删除
@@ -102,14 +103,22 @@ def calculate_factor_pnl(forecast, price, capital, point_size, risk_target, sr_c
 
 def process_forecast_pnls(instrument_code, capital=1000000, risk_target=0.16, target_abs_forecast=10):
     price = get_daily_price(instrument_code)
-    forecast_df = calculate_forecasts(price)
-    forecast_df = forecast_df / target_abs_forecast
+    # forecast_df = calculate_forecasts(price)
+    # forecast_df = forecast_df / target_abs_forecast
 
     point_size = get_point_size(instrument_code)
-    func_pnl = lambda forecast: calculate_factor_pnl(forecast, price, capital, point_size, risk_target)  # FIXME: sr_cost unfilled
-    daily_forecast_pnls = forecast_df.apply(func_pnl, axis=0)
-    daily_forecast_pnls[daily_forecast_pnls == 0.0] = np.nan
-    return daily_forecast_pnls
+    trading_rule_list = ['ewmac32', 'ewmac8']
+    dict_of_pandl_by_rule = {}
+    for rule_name in trading_rule_list:
+        forecast = get_capped_forecast(instrument_code, rule_name)
+        sr_cost = get_SR_cost_for_instrument_forecast(instrument_code, rule_name)
+        daily_pnl = calculate_factor_pnl(forecast, price, capital, point_size, risk_target, sr_cost)
+        dict_of_pandl_by_rule[rule_name] = daily_pnl
+        # func_pnl = lambda forecast: calculate_factor_pnl(forecast, price, capital, point_size, risk_target, sr_cost)
+        # daily_forecast_pnls = forecast_df.apply(func_pnl, axis=0)
+        # daily_forecast_pnls = forecast.apply(func_pnl)
+        # daily_forecast_pnls[daily_forecast_pnls == 0.0] = np.nan
+    return dict_of_pandl_by_rule
 
 
 def get_capped_forecast(instrument_code, rule_name):
@@ -161,17 +170,16 @@ def get_SR_cost_for_instrument_forecast(instrument_code, rule_name):
     return trading_cost
 
 
-sr_cost = get_SR_cost_for_instrument_forecast('CORN', 'ewmac32')
+# sr_cost = get_SR_cost_for_instrument_forecast('CORN', 'ewmac32')
+#
+# price = get_daily_price("CORN")
+# forecast = get_capped_forecast("CORN", 'ewmac32')
+# # forecast = calculate_forecasts(price)
+# capital = 1000000
+# point_size = get_point_size("CORN")
+# risk_target = 0.16
+# daily_pnl = calculate_factor_pnl(forecast, price, capital, point_size, risk_target, sr_cost)
 
-price = get_daily_price("CORN")
-forecast = get_capped_forecast("CORN", 'ewmac32')
-# forecast = calculate_forecasts(price)
-capital = 1000000
-point_size = get_point_size("CORN")
-risk_target = 0.16
-daily_pnl = calculate_factor_pnl(forecast, price, capital, point_size, risk_target, sr_cost)
-
-print('end')
 def generate_end_list(start_date, end_date):
     start_dates_per_period = pd.date_range(end_date, start_date, freq='-365D').to_list()
     start_dates_per_period.reverse()

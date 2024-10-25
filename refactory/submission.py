@@ -108,17 +108,20 @@ def process_forecast_pnls(instrument_code, capital=1000000, risk_target=0.16, ta
 
     point_size = get_point_size(instrument_code)
     trading_rule_list = ['ewmac32', 'ewmac8']
-    dict_of_pandl_by_rule = {}
+    # dict_of_pandl_by_rule = {}
+    pandl_by_rule = pd.DataFrame()
     for rule_name in trading_rule_list:
         forecast = get_capped_forecast(instrument_code, rule_name)
         sr_cost = get_SR_cost_for_instrument_forecast(instrument_code, rule_name)
         daily_pnl = calculate_factor_pnl(forecast, price, capital, point_size, risk_target, sr_cost)
-        dict_of_pandl_by_rule[rule_name] = daily_pnl
+        # dict_of_pandl_by_rule[rule_name] = daily_pnl
+        pandl_by_rule[rule_name] = daily_pnl
         # func_pnl = lambda forecast: calculate_factor_pnl(forecast, price, capital, point_size, risk_target, sr_cost)
         # daily_forecast_pnls = forecast_df.apply(func_pnl, axis=0)
         # daily_forecast_pnls = forecast.apply(func_pnl)
         # daily_forecast_pnls[daily_forecast_pnls == 0.0] = np.nan
-    return dict_of_pandl_by_rule
+    pandl_sum = pandl_by_rule.sum(axis=1)  # FIXME: 没对上，怀疑源代码是没有consider costs
+    return pandl_sum
 
 
 def get_capped_forecast(instrument_code, rule_name):

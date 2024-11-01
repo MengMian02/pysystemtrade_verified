@@ -338,7 +338,7 @@ def get_turnover_for_list_of_rules(instrument_list, trading_rule_list):
 
 def process_instrument_pnl(instrument):
     price = get_daily_price(instrument)
-    forecast_df = calculate_forecasts(price)
+    forecast_df = calculate_forecasts(price)  # FIXME: 这个forecast获取函数应该是部队的
 
     instruments = my_config.instruments
     trading_rule_list = ['ewmac32', 'ewmac8']

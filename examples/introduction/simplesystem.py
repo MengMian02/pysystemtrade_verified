@@ -29,15 +29,15 @@ We can create rules in a number of different ways
 Note that to make our rule work it needs to have
 """
 my_rules = Rules(ewmac)
-print(my_rules.trading_rules())
-
+# print(my_rules.trading_rules())
+#
 my_rules = Rules(dict(ewmac=ewmac))
-print(my_rules.trading_rules())
-
+# print(my_rules.trading_rules())
+#
 from systems.basesystem import System
-
+#
 my_system = System([my_rules], data)
-print(my_system)
+# print(my_system)
 
 print(my_system.rules.get_raw_forecast("SOFR", "ewmac").tail(5))
 """
@@ -83,8 +83,8 @@ my_config.forecast_scalar_estimate["pool_instruments"] = False
 print(my_system.forecastScaleCap.get_forecast_scalar("SOFR", "ewmac32").tail(5))
 
 # or we can use the values from the book
-my_config.forecast_scalars = dict(ewmac8=5.3, ewmac32=2.65)
-my_config.use_forecast_scale_estimates = False
+# my_config.forecast_scalars = dict(ewmac8=5.3, ewmac32=2.65)
+# my_config.use_forecast_scale_estimates = False
 fcs = ForecastScaleCap()
 my_system = System([fcs, my_rules], data, my_config)
 print(my_system.forecastScaleCap.get_capped_forecast("SOFR", "ewmac32").tail(5))
@@ -95,10 +95,10 @@ combine some rules
 from systems.forecast_combine import ForecastCombine
 
 # defaults
-combiner = ForecastCombine()
-my_system = System([fcs, my_rules, combiner], data, my_config)
-print(my_system.combForecast.get_forecast_weights("SOFR").tail(5))
-print(my_system.combForecast.get_forecast_diversification_multiplier("SOFR").tail(5))
+# combiner = ForecastCombine()
+# my_system = System([fcs, my_rules, combiner], data, my_config)
+# print(my_system.combForecast.get_forecast_weights("SOFR").tail(5))
+# print(my_system.combForecast.get_forecast_diversification_multiplier("SOFR").tail(5))
 
 # estimates:
 from systems.accounts.accounts_stage import Account

@@ -6,7 +6,7 @@ from refactory.data_source import get_daily_price, get_raw_carry_data, get_point
     get_roll_parameters
 from refactory.utils import get_volatily, ewmac, calculate_mixed_volatility, get_corr_estimator_for_instrument_weight, \
     get_stdev_estimator_for_instrument_weight, get_mean_estimator, optimisation, calculate_weighted_average_with_nans, \
-    get_cost_per_trade, robust_vol_calc
+    get_cost_per_trade
 from sysdata.config.configdata import Config
 
 my_config = Config()
@@ -77,15 +77,7 @@ def calculate_pnl(positions: pd.Series, prices: pd.Series):
 
 
 def calculate_factor_pnl(forecast, price, capital, point_size, risk_target, sr_cost):
-    position_target = get_position_target(price, point_size, capital, risk_target)
-    aligned_ave = position_target.reindex(forecast.index, method='ffill')
-    position = forecast.mul(aligned_ave, axis=0) / 10
-    pnl_in_points = calculate_pnl(positions=position, prices=price)
-    pnl = pnl_in_points * point_size
-    daily_pnl_gross = pnl.resample("B").sum()
-    daily_pnl_gross_series = daily_pnl_gross.iloc[:, 0]
-
-    annualised_price_vol_points = calculate_mixed_volatility(price.diff(), slow_vol_years=10)
+    aligned_ave, daily_pnl_gross_series = calculate_gross_daily_pnl(capital, forecast, point_size, price, risk_target)
 
     # 原代码对于aligned_ave有个对其且ffill 操作，为简便已删除
     # 源代码对于position 和sr_cost_annualised_figure有个ffill操作，已删除
@@ -93,13 +85,26 @@ def calculate_factor_pnl(forecast, price, capital, point_size, risk_target, sr_c
     # 源代码有个对sr_cost_as_annualised_figure有个reindex到price.index 和ffill 操作，已删除
     # Actually output in price space to match gross returns
     # These will be annualised figure, make it a small loss every day
+    annualised_price_vol_points = calculate_mixed_volatility(price.diff(), slow_vol_years=10)
     sr_cost_as_annualised_figure = (-sr_cost * aligned_ave * annualised_price_vol_points * 16).bfill()
     period_intervals_in_seconds = sr_cost_as_annualised_figure.index.to_series().diff().dt.total_seconds()
     costs_in_points = sr_cost_as_annualised_figure * period_intervals_in_seconds / (365.25 * 24 * 60 * 60)
     costs = costs_in_points * point_size  # 后续有个fx 的序列，但目前不加
     daily_pnl_net = daily_pnl_gross_series.add(costs, fill_value=0)
 
-    return daily_pnl_net
+    return daily_pnl_net, costs
+
+
+def calculate_gross_daily_pnl(capital, forecast, point_size, price, risk_target):
+    position_target = get_position_target(price, point_size, capital, risk_target)
+    aligned_ave = position_target.reindex(forecast.index, method='ffill')
+    position = forecast.mul(aligned_ave, axis=0) / 10
+    pnl_in_points = calculate_pnl(positions=position, prices=price)
+    pnl = pnl_in_points * point_size
+    daily_pnl_gross = pnl.resample("B").sum()
+    daily_pnl_gross_series = daily_pnl_gross.iloc[:, 0]
+    return aligned_ave, daily_pnl_gross_series
+
 
 def process_forecast_pnls(instrument_code, capital=1000000, risk_target=0.16, target_abs_forecast=10):
     price = get_daily_price(instrument_code)
@@ -123,7 +128,6 @@ def process_forecast_pnls(instrument_code, capital=1000000, risk_target=0.16, ta
     pandl_sum = pandl_by_rule.sum(axis=1)  # FIXME: 没对上，怀疑源代码是没有consider costs
     return pandl_sum
 
-
 def get_capped_forecast(instrument_code, rule_name):
     price = get_daily_price(instrument_code)
     if rule_name == 'ewmac32':
@@ -136,6 +140,8 @@ def get_capped_forecast(instrument_code, rule_name):
         return ewmac8
     else:
         raise 'Rule not defined '
+
+
 
 def forecast_turnover_for_individual_instrument(instrument_code, rule_name):
     forecast = get_capped_forecast(instrument_code, rule_name)
@@ -176,12 +182,13 @@ def get_SR_cost_for_instrument_forecast(instrument_code, rule_name):
 # sr_cost = get_SR_cost_for_instrument_forecast('CORN', 'ewmac32')
 #
 # price = get_daily_price("CORN")
-# forecast = get_capped_forecast("CORN", 'ewmac32')
-# # forecast = calculate_forecasts(price)
+# forecast_get_capped_forecast = get_capped_forecast("CORN", 'ewmac32')
 # capital = 1000000
 # point_size = get_point_size("CORN")
 # risk_target = 0.16
-# daily_pnl = calculate_factor_pnl(forecast, price, capital, point_size, risk_target, sr_cost)
+# daily_pnl, costs = calculate_factor_pnl(forecast_get_capped_forecast, price, capital, point_size, risk_target, sr_cost)
+#
+# print('end')
 
 def generate_end_list(start_date, end_date):
     start_dates_per_period = pd.date_range(end_date, start_date, freq='-365D').to_list()
@@ -335,14 +342,90 @@ def get_turnover_for_list_of_rules(instrument_list, trading_rule_list):
 
     return turnover_dict
 
+def process_instrument_pnl(instrument_code):
 
-def process_instrument_pnl(instrument):
-    price = get_daily_price(instrument)
-    forecast_df = calculate_forecasts(price)  # FIXME: 这个forecast获取函数应该是部队的
 
     instruments = my_config.instruments
+
+    # Get the gross returns, CLEARED
     trading_rule_list = ['ewmac32', 'ewmac8']
+
+    gross_returns_dict = {}
+    for instrument in instruments:
+        gross_returns_single_instrument_dict_without_df = {}
+        price = get_daily_price(instrument)
+        point_size = get_point_size(instrument)
+        for trading_rule in trading_rule_list:
+            forecast = get_capped_forecast(instrument, trading_rule)
+            _, gross_returns_series = calculate_gross_daily_pnl(forecast=forecast, point_size=point_size, price=price,
+                                                                capital=1000000, risk_target=0.16)
+            gross_returns_series = gross_returns_series.replace(0, np.nan)
+            gross_returns_single_instrument_dict_without_df[trading_rule] = gross_returns_series
+        gross_returns_single_instrument_df = pd.DataFrame(gross_returns_single_instrument_dict_without_df)
+        gross_returns_dict[instrument] = gross_returns_single_instrument_df
+
+    # Turnovers CLEARED
     turnovers = get_turnover_for_list_of_rules(instruments, trading_rule_list)
+
+
+    #TODO: Get costs dict
+    # calculated with calculate_factor_pnl() before
+
+    dict_of_costs = {}
+    for instrument in instruments:
+        SR_dict = {}
+        for trading_rule in trading_rule_list:
+            price = get_daily_price(instrument)
+            point_size = get_point_size(instrument)
+            forecast = get_capped_forecast(instrument, trading_rule)
+            sr_cost = get_SR_cost_for_instrument_forecast(instrument, trading_rule)
+            _, cost_curve = calculate_factor_pnl(forecast=forecast, price=price, capital=1000000,
+                                                 point_size=point_size, sr_cost=sr_cost, risk_target=0.16)
+            cost_curve.iloc[:11] = np.nan #QUESTION: 为什么前11个数都是Nan
+            if instrument == 'US10':
+                cost_curve.iloc[:13] = np.nan #QUESTION: 为什么到了US10是前13个数字
+            cost_curve_mean = cost_curve.mean()
+
+            _, gross_returns_series = calculate_gross_daily_pnl(forecast=forecast, point_size=point_size, price=price,
+                                                                capital=1000000, risk_target=0.16)
+            gross_returns_series = gross_returns_series.replace(0, np.nan)
+            gross_returns_std = gross_returns_series.std()
+            annual_cost_SR = 16 * cost_curve_mean / gross_returns_std
+            SR_dict[trading_rule] = annual_cost_SR
+        dict_of_costs[instrument] = SR_dict
+
+
+    # CLEARED
+    #QUESTION: Find out why the cost multiplier is set at 2
+    cost_multiplier = 2
+    dict_of_sr_costs = {}
+    for trading_rule in trading_rule_list:
+        turnover = turnovers[trading_rule][instrument_code]
+        cost = dict_of_costs[instrument_code][trading_rule]
+        cost_per_turnover_this_asset = cost / turnover
+
+        all_turnovers = turnovers[trading_rule]
+        average_turnover_across_assets = np.nanmean(list(all_turnovers.values()))
+
+        pooled_cost = cost_per_turnover_this_asset * average_turnover_across_assets * cost_multiplier
+        dict_of_sr_costs[trading_rule] = pooled_cost
+
+    #TODO: Adjust for net returns after getting both gross and costs
+    net_returns_dict = {}
+    for instrument in gross_returns_dict.keys():
+        gross_returns = gross_returns_dict[instrument]
+        net_returns_single_instrument = {}
+        for column_name in gross_returns.columns:
+            gross_returns_daily_std = gross_returns[column_name].std()
+            daily_sr_cost = dict_of_sr_costs[column_name] / 16
+            daily_returns_cost = daily_sr_cost * gross_returns_daily_std
+            net_returns_single_instrument_rule = gross_returns[column_name] + daily_returns_cost
+            net_returns_single_instrument[column_name] = net_returns_single_instrument_rule
+        net_returns_single_instrument = pd.DataFrame(net_returns_single_instrument)
+        net_returns_dict[instrument] = net_returns_single_instrument  # CLEARED
+
+    net_returns = net_returns_dict.single_resampled_set_of_returns(frequency)
+
     daily_forecast_pnls = [process_forecast_pnls(it) for it in instruments]
     weekly_forecast_pnls = [p.resample('W').sum() for p in daily_forecast_pnls]
     returns = combine_instrument_pnl_df(weekly_forecast_pnls)
@@ -370,6 +453,7 @@ def process_instrument_pnl(instrument):
 
     return pnl_daily
 
+process_instrument_pnl('US10')
 
 def main(my_config):
     instruments = my_config.instruments

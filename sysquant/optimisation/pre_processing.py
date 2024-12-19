@@ -188,7 +188,7 @@ class returnsPreProcessor(object):
 
     def get_pooled_SR_costs_using_turnover(self, asset_name: str) -> dictOfSR:
         self.log.debug("Using pooled turnover cost SR for %s" % asset_name)
-        ## Costs we use are: costs for our instrument, multiplied by average turnover across instruments
+        # Costs we use are: costs for our instrument, multiplied by average turnover across instruments
         dict_of_costs = self.get_dict_of_cost_dicts_by_asset_name()
 
         # a dict, keys are forecasts, each entry is a list ordered by instrument code

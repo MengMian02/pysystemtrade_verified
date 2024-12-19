@@ -233,7 +233,7 @@ class dictOfReturnsForOptimisationWithCosts(dict):
         gross_returns_dict = dict(
             [(code, getattr(self[code], type)) for code in self.keys()]
         )
-        gross_returns_dict = dictOfReturnsForOptimisation(gross_returns_dict)
+        gross_returns_dict = dictOfReturnsForOptimisation(gross_returns_dict)  #只是打包
 
         return gross_returns_dict
 

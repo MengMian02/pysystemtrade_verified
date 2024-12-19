@@ -652,7 +652,7 @@ class ForecastCombine(SystemStage):
 
         returns_pre_processor = returnsPreProcessor(
             pandl_forecasts, turnovers=turnovers, log=self.log, **weighting_params
-        )
+        )  # 只是打包，没有操作
 
         return returns_pre_processor
 

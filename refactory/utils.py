@@ -171,3 +171,22 @@ def get_cost_per_trade(instrument_code):
     ann_stdev_instrument_currency = ann_stdev_price_units * block_price_multiplier
     cost_per_trade = cost_instrument_currency / ann_stdev_instrument_currency
     return cost_per_trade
+
+
+def single_resampled_set_of_returns(self, frequency: str) -> returnsForOptimisation:
+    returns_as_list = listOfDataFrames(self.values())
+    pooled_length = len(returns_as_list)
+
+    returns_as_list_downsampled = returns_as_list.resample_sum(frequency)
+    returns_as_list_common_ts = (
+        returns_as_list_downsampled.reindex_to_common_index()
+    )
+
+    returns_for_optimisation = stacked_df_with_added_time_from_list(
+        returns_as_list_common_ts
+    )
+    returns_for_optimisation = returnsForOptimisation(
+        returns_for_optimisation, frequency=frequency, pooled_length=pooled_length
+    )
+
+    return returns_for_optimisation

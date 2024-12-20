@@ -80,7 +80,7 @@ def get_stdev_estimator_for_instrument_weight(data_for_analysis, fit_end, span=5
     ave_stdev = np.nanmean(stdev_list)
     norm_stdev = [ave_stdev] * len(stdev_list)
     norm_factor = [stdev / ave_stdev for stdev in stdev_list]
-    return norm_stdev, norm_factor
+    return norm_stdev, norm_factor, stdev_list
 
 
 def get_mean_estimator(data, fit_end, span=50000, min_periods=10):

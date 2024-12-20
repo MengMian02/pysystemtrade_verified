@@ -190,7 +190,7 @@ def get_SR_cost_for_instrument_forecast(instrument_code, rule_name):
 #
 # print('end')
 
-def generate_end_list(start_date, end_date):
+def generate_fit_end_list(start_date, end_date):
     start_dates_per_period = pd.date_range(end_date, start_date, freq='-365D').to_list()
     start_dates_per_period.reverse()
     end_list = start_dates_per_period[1:-1]
@@ -202,10 +202,13 @@ def calculate_forecast_weights(pnl_df, fit_end):
     span = len(my_config.instruments) * 50000
     min_periods_corr = len(my_config.instruments) * 10
     min_periods = len(my_config.instruments) * 5
-    norm_stdev, norm_factor = get_stdev_estimator_for_instrument_weight(pnl_df, fit_end, span, min_periods)
+    norm_stdev, norm_factor, stdev_list = get_stdev_estimator_for_instrument_weight(pnl_df, fit_end, span, min_periods)
     mean_list = get_mean_estimator(pnl_df, fit_end, span, min_periods)
     norm_mean = [a / b for a, b in zip(mean_list, norm_factor)]
-    corr = get_corr_estimator_for_instrument_weight(pnl_df, fit_end, span, min_periods_corr)
+    corr = get_corr_estimator_for_instrument_weight(pnl_df, fit_end, span, min_periods_corr)  # Corr CLEARED
+
+    #FIXME: 所以norm_mean和mean_list是怎么用的
+    #有时候是norm_mean, 有时候是mean_list. 先算出来的mean_list和stdev_list, 然后处理了
     weight = optimisation(number, corr, norm_mean, norm_stdev)
     return weight
 
@@ -224,7 +227,7 @@ def combine_instrument_pnl_df(weekly_ret):
 
 def calculate_forecast_diversify_multiplier(forecasts, forecast_weights):
     weekly_forecast = forecasts.resample('W').last()
-    fit_end_list = generate_end_list(weekly_forecast.index[0], weekly_forecast.index[-1])
+    fit_end_list = generate_fit_end_list(weekly_forecast.index[0], weekly_forecast.index[-1])
 
     full_corr = weekly_forecast.ewm(span=250, min_periods=20, ignore_na=True).corr(pairwise=True)
     size_of_matrix = len(weekly_forecast.columns)
@@ -367,10 +370,6 @@ def process_instrument_pnl(instrument_code):
     # Turnovers CLEARED
     turnovers = get_turnover_for_list_of_rules(instruments, trading_rule_list)
 
-
-    #TODO: Get costs dict
-    # calculated with calculate_factor_pnl() before
-
     dict_of_costs = {}
     for instrument in instruments:
         SR_dict = {}
@@ -410,7 +409,6 @@ def process_instrument_pnl(instrument_code):
         pooled_cost = cost_per_turnover_this_asset * average_turnover_across_assets * cost_multiplier
         dict_of_sr_costs[trading_rule] = pooled_cost
 
-    #TODO: Adjust for net returns after getting both gross and costs
     net_returns_dict = {}
     for instrument in gross_returns_dict.keys():
         gross_returns = gross_returns_dict[instrument]
@@ -426,18 +424,30 @@ def process_instrument_pnl(instrument_code):
 
     net_returns = single_resampled_set_of_returns(net_returns_dict, frequency='W')  # CLEARED
 
-    daily_forecast_pnls = [process_forecast_pnls(it) for it in instruments]
-    weekly_forecast_pnls = [p.resample('W').sum() for p in daily_forecast_pnls]
-    returns = combine_instrument_pnl_df(weekly_forecast_pnls)
+
+    start_date = net_returns.index[0]
+    end_date = net_returns.index[-1]
+    end_list = generate_fit_end_list(start_date, end_date)
+    weight_df = pd.DataFrame([calculate_forecast_weights(net_returns, end) for end in end_list], index=end_list)
 
 
-    start_date = returns.index[0]
-    end_date = returns.index[-1]
-    end_list = generate_end_list(start_date, end_date)
-    weight_df = pd.DataFrame([calculate_forecast_weights(returns, end) for end in end_list], index=end_list)
-    weight_df = weight_df.reindex(forecast_df.index, method='ffill')
+    # To add the initial weight
+    column_num = len(weight_df.columns)
+    initial_weight = {col: 1/column_num for col in weight_df.columns}
+    initial_weight = pd.DataFrame(initial_weight, index=[start_date])
+    weight_df = pd.concat([initial_weight, weight_df], axis=0)
+    weight_df.columns = net_returns.columns
+
+    price = get_daily_price(instrument_code)
+    forecast = calculate_forecasts(price)
+    weight_df = weight_df.reindex(forecast.index, method='ffill')
     weight_df = weight_df.fillna(1 / len(weight_df.columns))
-    forecast_weights = weight_df.ewm(span=125).mean()
+    daily_forecast_weights_fixed_to_forecasts_unsmoothed = weight_df.resample('1B').mean()
+    forecast_weights = daily_forecast_weights_fixed_to_forecasts_unsmoothed.ewm(span=125).mean()
+
+    # 跳过一个weight normalisation to 1 的函数
+
+
     forecast_weights.columns = forecast_df.columns
     # forecast_weights.rename(columns={0: 'ewmac32', 1: 'ewmac8'}, inplace=True)
     # forecast_weights = forecast_weights[['ewmac8', 'ewmac32']]

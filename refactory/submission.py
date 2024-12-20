@@ -13,16 +13,6 @@ my_config = Config()
 my_config.instruments = ["CORN", "SOFR", "SP500_micro", 'US10']
 
 
-def calculate_forecasts(price):
-    raw_ewmac8 = ewmac(price, 8, 32, 1)
-    ewmac8 = final_forecast('ewmac8', raw_ewmac8, price, 20)
-    raw_ewmac32 = ewmac(price, 32, 128, 1)
-    ewmac32 = final_forecast('ewmac32', raw_ewmac32, price, 20)
-    forecast_df = pd.concat([ewmac8, ewmac32], axis=1)
-    forecast_df.index = pd.to_datetime(forecast_df.index)
-    return forecast_df
-
-
 def final_forecast(name, raw_forecast, price, upper_cap=20):
     raw_forecast[raw_forecast == 0] = np.nan
 
@@ -177,7 +167,6 @@ def get_SR_cost_for_instrument_forecast(instrument_code, rule_name):
 
     trading_cost = transaction_cost + holding_cost
     return trading_cost
-
 
 # sr_cost = get_SR_cost_for_instrument_forecast('CORN', 'ewmac32')
 #
@@ -439,20 +428,29 @@ def process_instrument_pnl(instrument_code):
     weight_df.columns = net_returns.columns
 
     price = get_daily_price(instrument_code)
-    forecast = calculate_forecasts(price)
-    weight_df = weight_df.reindex(forecast.index, method='ffill')
+    weight_df = weight_df.reindex(price.index, method='ffill')
     weight_df = weight_df.fillna(1 / len(weight_df.columns))
     daily_forecast_weights_fixed_to_forecasts_unsmoothed = weight_df.resample('1B').mean()
     forecast_weights = daily_forecast_weights_fixed_to_forecasts_unsmoothed.ewm(span=125).mean()
 
     # 跳过一个weight normalisation to 1 的函数
 
+    # fdm = calculate_forecast_diversify_multiplier(forecast, forecast_weights)
+    list_of_forecast = []
+    for instrument in instruments:
+        forecast_dict = {}
+        for trading_rule in trading_rule_list:
+            forecast = get_capped_forecast(instrument, trading_rule)
+            forecast_dict[trading_rule] = forecast
+        forecast_df = pd.DataFrame(forecast_dict)  #TODO: Forecast df 的Index有问题，后期resample有点困难
+        list_of_forecast.append(forecast_df)
 
-    forecast_weights.columns = forecast_df.columns
-    # forecast_weights.rename(columns={0: 'ewmac32', 1: 'ewmac8'}, inplace=True)
-    # forecast_weights = forecast_weights[['ewmac8', 'ewmac32']]
+    list_of_resampled_forecast = [forecast_df.resample('W').last() for forecast_df in list_of_forecast]
+    pooled_data = combine_instrument_pnl_df(list_of_resampled_forecast)
 
-    fdm = calculate_forecast_diversify_multiplier(forecast_df, forecast_weights)
+    # for fit_dates in end_list:
+    #     raw_matrix =
+
     combined_forecast = (forecast_weights * forecast_df).sum(axis=1) * fdm
     final_forecast = combined_forecast.clip(20, -20)
     volatility_scalar = calculate_volatility_scalar(instrument)

@@ -6,7 +6,7 @@ from refactory.data_source import get_daily_price, get_raw_carry_data, get_point
     get_roll_parameters
 from refactory.utils import get_volatily, ewmac, calculate_mixed_volatility, get_corr_estimator_for_instrument_weight, \
     get_stdev_estimator_for_instrument_weight, get_mean_estimator, optimisation, calculate_weighted_average_with_nans, \
-    get_cost_per_trade
+    get_cost_per_trade, single_resampled_set_of_returns
 from sysdata.config.configdata import Config
 
 my_config = Config()
@@ -424,7 +424,7 @@ def process_instrument_pnl(instrument_code):
         net_returns_single_instrument = pd.DataFrame(net_returns_single_instrument)
         net_returns_dict[instrument] = net_returns_single_instrument  # CLEARED
 
-    net_returns = net_returns_dict.single_resampled_set_of_returns(frequency)
+    net_returns = single_resampled_set_of_returns(net_returns_dict, frequency='W')  # CLEARED
 
     daily_forecast_pnls = [process_forecast_pnls(it) for it in instruments]
     weekly_forecast_pnls = [p.resample('W').sum() for p in daily_forecast_pnls]

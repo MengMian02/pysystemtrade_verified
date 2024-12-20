@@ -173,20 +173,33 @@ def get_cost_per_trade(instrument_code):
     return cost_per_trade
 
 
-def single_resampled_set_of_returns(self, frequency: str) -> returnsForOptimisation:
-    returns_as_list = listOfDataFrames(self.values())
+def single_resampled_set_of_returns(data_dict, frequency: str):
+    returns_as_list = []
+    for _, instrument_returns in data_dict.items():
+        returns_as_list.append(instrument_returns)
     pooled_length = len(returns_as_list)
 
-    returns_as_list_downsampled = returns_as_list.resample_sum(frequency)
-    returns_as_list_common_ts = (
-        returns_as_list_downsampled.reindex_to_common_index()
-    )
+    data_resampled = [data_item.resample(frequency).sum() for data_item in returns_as_list]
+    all_indices = [data_item.index for data_item in data_resampled]
+    flattened = flatten_list(all_indices)
+    common_index = list(set(flattened))
+    common_index.sort()
+    reindexed_data = [data_item.reindex(common_index) for data_item in data_resampled]
 
-    returns_for_optimisation = stacked_df_with_added_time_from_list(
-        returns_as_list_common_ts
-    )
-    returns_for_optimisation = returnsForOptimisation(
-        returns_for_optimisation, frequency=frequency, pooled_length=pooled_length
-    )
+    # 暂时先不加common column 的function
 
-    return returns_for_optimisation
+    for offset_value, data_item in enumerate(reindexed_data):
+        data_item.index = data_item.index + pd.Timedelta("%dus" % offset_value)
+
+    stacked_data = pd.concat(reindexed_data, axis=0)
+    stacked_data = stacked_data.sort_index()
+
+    return stacked_data
+
+
+def flatten_list(data):
+    flattened = []
+    for sublist in data:
+        for item in sublist:
+            flattened.append(item)
+    return flattened

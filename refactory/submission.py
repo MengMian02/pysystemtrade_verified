@@ -12,6 +12,19 @@ from sysdata.config.configdata import Config
 my_config = Config()
 my_config.instruments = ["CORN", "SOFR", "SP500_micro", 'US10']
 
+def get_capped_forecast(instrument_code, rule_name):
+    price = get_daily_price(instrument_code)
+    if rule_name == 'ewmac32':
+        raw_ewmac32 = ewmac(price, 32, 128, 1)
+        ewmac32 = final_forecast('ewmac32', raw_ewmac32, price, 20)
+        return ewmac32
+    if rule_name == 'ewmac8':
+        raw_ewmac8 = ewmac(price, 8, 32, 1)
+        ewmac8 = final_forecast('ewmac8', raw_ewmac8, price, 20)
+        return ewmac8
+    else:
+        raise 'Rule not defined '
+
 
 def final_forecast(name, raw_forecast, price, upper_cap=20):
     raw_forecast[raw_forecast == 0] = np.nan
@@ -40,10 +53,10 @@ def get_forecast_scalar(raw_forecast, window=250000, min_period=500, target_abs_
         scaling_factor = scaling_factor.bfill()
     return scaling_factor
 
-
+###################################################################################################################
 
 # FIXME 为何做了两次risk target？
-def get_position_target(price, point_size, capital=1000000, risk_target=0.16):
+def get_pos_target_from_risk_target(price, point_size, capital=1000000, risk_target=0.16):
     ret_volatility = calculate_mixed_volatility(price.diff(), slow_vol_years=10)
     daily_risk_target = risk_target / (256 ** 0.5)
     daily_cash_vol_target = daily_risk_target * capital
@@ -51,7 +64,7 @@ def get_position_target(price, point_size, capital=1000000, risk_target=0.16):
     return position_target
 
 
-def calculate_pnl(positions: pd.Series, prices: pd.Series):
+def calculate_daily_pnl_given_pos_prices(positions: pd.Series, prices: pd.Series):
     pos_series = positions.groupby(positions.index).last()
     both_series = pd.concat([pos_series, prices], axis=1)
     if len(both_series.columns) == 2:
@@ -59,20 +72,14 @@ def calculate_pnl(positions: pd.Series, prices: pd.Series):
     both_series = both_series.ffill()
     price_returns = both_series.price.diff()
     # 源代码在这里计算的时候是shift(1), 可经过对比，发现Position series 事先已经经历过一次shift(1), 所以一共shift(2)
-    # FIXME: 解释为什么出现了shift(2)
     adjusted_both_series = both_series.loc[:, both_series.columns != 'price'].shift(2)
-    returns = adjusted_both_series.mul(price_returns, axis=0)
-    returns[returns.isna()] = 0.0
-    return returns
+    daily_pnl = adjusted_both_series.mul(price_returns, axis=0)
+    daily_pnl[daily_pnl.isna()] = 0.0
+    return daily_pnl
 
 
 def calculate_factor_pnl(forecast, price, capital, point_size, risk_target, sr_cost):
     aligned_ave, daily_pnl_gross_series = calculate_gross_daily_pnl(capital, forecast, point_size, price, risk_target)
-
-    # 原代码对于aligned_ave有个对其且ffill 操作，为简便已删除
-    # 源代码对于position 和sr_cost_annualised_figure有个ffill操作，已删除
-    # 源代码有个去除SR_cost_aligned_positions_backfilled.isna()操作，已删除
-    # 源代码有个对sr_cost_as_annualised_figure有个reindex到price.index 和ffill 操作，已删除
     # Actually output in price space to match gross returns
     # These will be annualised figure, make it a small loss every day
     annualised_price_vol_points = calculate_mixed_volatility(price.diff(), slow_vol_years=10)
@@ -86,51 +93,14 @@ def calculate_factor_pnl(forecast, price, capital, point_size, risk_target, sr_c
 
 
 def calculate_gross_daily_pnl(capital, forecast, point_size, price, risk_target):
-    position_target = get_position_target(price, point_size, capital, risk_target)
-    aligned_ave = position_target.reindex(forecast.index, method='ffill')
-    position = forecast.mul(aligned_ave, axis=0) / 10
-    pnl_in_points = calculate_pnl(positions=position, prices=price)
+    position_target = get_pos_target_from_risk_target(price, point_size, capital, risk_target)
+    position_target = position_target.reindex(forecast.index, method='ffill')
+    position = forecast.mul(position_target, axis=0) / 10  #TODO: 其实没看明白这一步
+    pnl_in_points = calculate_daily_pnl_given_pos_prices(positions=position, prices=price)
     pnl = pnl_in_points * point_size
     daily_pnl_gross = pnl.resample("B").sum()
     daily_pnl_gross_series = daily_pnl_gross.iloc[:, 0]
-    return aligned_ave, daily_pnl_gross_series
-
-
-def process_forecast_pnls(instrument_code, capital=1000000, risk_target=0.16, target_abs_forecast=10):
-    price = get_daily_price(instrument_code)
-    # forecast_df = calculate_forecasts(price)
-    # forecast_df = forecast_df / target_abs_forecast
-
-    point_size = get_point_size(instrument_code)
-    trading_rule_list = ['ewmac32', 'ewmac8']
-    # dict_of_pandl_by_rule = {}
-    pandl_by_rule = pd.DataFrame()
-    for rule_name in trading_rule_list:
-        forecast = get_capped_forecast(instrument_code, rule_name)
-        sr_cost = get_SR_cost_for_instrument_forecast(instrument_code, rule_name)
-        daily_pnl = calculate_factor_pnl(forecast, price, capital, point_size, risk_target, sr_cost)
-        # dict_of_pandl_by_rule[rule_name] = daily_pnl
-        pandl_by_rule[rule_name] = daily_pnl
-        # func_pnl = lambda forecast: calculate_factor_pnl(forecast, price, capital, point_size, risk_target, sr_cost)
-        # daily_forecast_pnls = forecast_df.apply(func_pnl, axis=0)
-        # daily_forecast_pnls = forecast.apply(func_pnl)
-        # daily_forecast_pnls[daily_forecast_pnls == 0.0] = np.nan
-    pandl_sum = pandl_by_rule.sum(axis=1)  # FIXME: 没对上，怀疑源代码是没有consider costs
-    return pandl_sum
-
-def get_capped_forecast(instrument_code, rule_name):
-    price = get_daily_price(instrument_code)
-    if rule_name == 'ewmac32':
-        raw_ewmac32 = ewmac(price, 32, 128, 1)
-        ewmac32 = final_forecast('ewmac32', raw_ewmac32, price, 20)
-        return ewmac32
-    if rule_name == 'ewmac8':
-        raw_ewmac8 = ewmac(price, 8, 32, 1)
-        ewmac8 = final_forecast('ewmac8', raw_ewmac8, price, 20)
-        return ewmac8
-    else:
-        raise 'Rule not defined '
-
+    return position_target, daily_pnl_gross_series
 
 
 def forecast_turnover_for_individual_instrument(instrument_code, rule_name):
@@ -310,7 +280,7 @@ def adjust_by_buffer(last, current, top, bottom, trade_to_edge=True):
 
 
 def calculate_instrument_pnl(instrument, position_buffered, price):
-    pnl_in_points = calculate_pnl(positions=position_buffered, prices=(price))
+    pnl_in_points = calculate_daily_pnl_given_pos_prices(positions=position_buffered, prices=(price))
     point_size = get_point_size(instrument)
     pnl_in_ccy = pnl_in_points * point_size
     pnl_daily = pnl_in_ccy.resample("B").sum()
@@ -434,7 +404,6 @@ def process_instrument_pnl(instrument_code):
     forecast_weights = daily_forecast_weights_fixed_to_forecasts_unsmoothed.ewm(span=125).mean()
 
     # 跳过一个weight normalisation to 1 的函数
-
     # fdm = calculate_forecast_diversify_multiplier(forecast, forecast_weights)
     list_of_forecast = []
     for instrument in instruments:
